@@ -14,7 +14,28 @@
 #include <cstring>
 #include <unordered_map>
 
+#include <pthread.h>
+#include <sys/qos.h>
+
 namespace dcr {
+
+MatrixProcessor::MatrixProcessor()
+{
+    // Build the worker pool up-front so engine restarts don't pay thread-
+    // creation cost.  Sizing: hardware threads minus 2 (one for matrix
+    // thread itself, one to keep UI / system responsive); capped at 7
+    // because plugin parallelism above ~8 chains tends to be cache-bound
+    // and stops scaling.
+    const int hw = (int) std::thread::hardware_concurrency();
+    const int n  = std::min (7, std::max (0, hw - 2));
+    pool = std::make_unique<WorkerPool> (n);
+}
+
+MatrixProcessor::~MatrixProcessor()
+{
+    // Matrix thread should already be stopped by AudioEngine::stop().
+    // Pool dtor joins its workers cleanly.
+}
 
 void MatrixProcessor::configure (std::vector<GlobalInput>  ins,
                                  std::vector<GlobalOutput> outs,
@@ -194,11 +215,18 @@ bool MatrixProcessor::tryProcessOneBlock()
     }
 
     // Per-input single-channel plugin chains (3 slots each), run BEFORE
-    // the input group multi-channel chain and the matrix mix.
-    for (size_t i = 0; i < inputs.size(); ++i)
+    // the input group multi-channel chain and the matrix mix.  Channels are
+    // independent (each has its own buffer slice and its own PluginHost),
+    // so they fork across the worker pool.  The pool inlines on the caller
+    // for count <= 2 to skip sync overhead in the common 1/2-channel case.
+    if (! inputs.empty() && pool != nullptr)
     {
-        if (inputs[i].plugin != nullptr)
-            inputs[i].plugin->processBlock (inBuf.data() + i * (size_t) blockSize, blockSize);
+        pool->parallelFor ((int) inputs.size(), [this] (int i)
+        {
+            if (inputs[(size_t) i].plugin != nullptr)
+                inputs[(size_t) i].plugin->processBlock (
+                    inBuf.data() + (size_t) i * (size_t) blockSize, blockSize);
+        });
     }
 
     refreshSnapshotIfDirty();
@@ -252,12 +280,17 @@ bool MatrixProcessor::tryProcessOneBlock()
         juce::FloatVectorOperations::addWithMultiply (outRow, inRow, rt.currentGain, blockSize);
     }
 
-    // Per-output plugin DSP (single-channel inserts).
-    for (size_t i = 0; i < outputs.size(); ++i)
+    // Per-output single-channel plugin chains.  Same parallelism story as
+    // the input side -- each output channel has its own buffer slice + its
+    // own host, so the pool can fan the work out across cores.
+    if (! outputs.empty() && pool != nullptr)
     {
-        float* src = outBuf.data() + i * (size_t) blockSize;
-        if (outputs[i].plugin != nullptr)
-            outputs[i].plugin->processBlock (src, blockSize);
+        pool->parallelFor ((int) outputs.size(), [this] (int i)
+        {
+            float* src = outBuf.data() + (size_t) i * (size_t) blockSize;
+            if (outputs[(size_t) i].plugin != nullptr)
+                outputs[(size_t) i].plugin->processBlock (src, blockSize);
+        });
     }
 
     // Multi-channel group inserts.  For each group, gather member rows into
@@ -326,6 +359,14 @@ bool MatrixProcessor::tryProcessOneBlock()
 void MatrixProcessor::threadLoop()
 {
     juce::Thread::setCurrentThreadName ("dcr.Matrix");
+
+    // Audio-rate worker -- bump scheduling QoS to the highest non-RT class
+    // so the kernel doesn't time-slice us against random UI / Spotlight /
+    // background work.  USER_INTERACTIVE is Apple's recommended class for
+    // audio worker threads that aren't the I/O callback itself.  Without
+    // this, OpenGL paint storms or another busy app can preempt us for
+    // long enough to underrun the output ring -> audible pops.
+    pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
 
     while (running.load (std::memory_order_relaxed))
     {

@@ -3,9 +3,11 @@
 #include <juce_core/juce_core.h>
 
 #include "Engine/EngineSettings.h"
+#include "Engine/WorkerPool.h"
 #include "Routing/RoutingMatrix.h"
 
 #include <atomic>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -22,6 +24,9 @@ class InputGroupManager;
 class MatrixProcessor
 {
 public:
+    MatrixProcessor();
+    ~MatrixProcessor();
+
     struct GlobalInput  { DeviceWorker* device; int channelIndex; PluginHost* plugin = nullptr; };
     struct GlobalOutput { DeviceWorker* device; int channelIndex; PluginHost* plugin = nullptr; };
 
@@ -88,6 +93,12 @@ private:
     float    smoothCoeff = 1.0f;             // 1.0 = no smoothing (instant)
 
     void refreshSnapshotIfDirty();
+
+    // Persistent fork/join pool used to parallelize the per-input and per-
+    // output single-channel plugin chains.  Created once in the ctor;
+    // survives engine restarts so we don't pay thread-creation cost every
+    // time devices change.
+    std::unique_ptr<WorkerPool> pool;
 };
 
 } // namespace dcr

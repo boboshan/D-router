@@ -18,17 +18,23 @@ MainComponent::MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (&customLookAndFeel);
     setLookAndFeel (&customLookAndFeel);
 
-    // Continuous repainting eliminates the violent live-resize jitter on
-    // macOS: with it OFF, the GL framebuffer only refreshes on damage
-    // events, so during a drag-resize the user sees the previous frame
-    // stretched against the new bounds between ticks.  On modern hardware
-    // a 60 Hz refresh through OpenGL is essentially free.
-    openGLContext.setContinuousRepainting (true);
+    // Continuous repainting forces a full-frame redraw at vsync (~60 Hz)
+    // regardless of UI state.  That sounded harmless on Apple Silicon but
+    // in practice the constant paint loop preempts the matrix audio thread
+    // hard enough to cause underruns ("popping") plus a generally
+    // sluggish system / choppy animations.  Leave it OFF; components
+    // already call repaint() on their own when their state actually
+    // changes (LevelMeter only repaints when its segment count changes,
+    // CrosspointGrid only on cell hit / hover, etc.).  Tradeoff: live
+    // resize can show brief frame staleness.
+    openGLContext.setContinuousRepainting (false);
 
     setSize (1100, 700);
 
     title.setFont (juce::FontOptions (22.0f, juce::Font::bold));
-    title.setColour (juce::Label::textColourId, customLookAndFeel.getAccent());
+    // App brand label is always white -- not theme-tinted -- so the brand
+    // reads cleanly against any accent colour the user picks.
+    title.setColour (juce::Label::textColourId, juce::Colours::white);
     title.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (title);
 
@@ -67,7 +73,9 @@ MainComponent::MainComponent()
 
                 // Theme + repaint are pure UI; safe in either path.
                 customLookAndFeel.applyTheme (engine.getSettings());
-                title.setColour (juce::Label::textColourId, customLookAndFeel.getAccent());
+                // App brand label is always white -- not theme-tinted -- so the brand
+    // reads cleanly against any accent colour the user picks.
+    title.setColour (juce::Label::textColourId, juce::Colours::white);
                 repaint();
             });
     };
@@ -173,7 +181,9 @@ MainComponent::MainComponent()
     // Load persistent settings (engine SR, ring sizes, SRC quality, theme).
     engine.setSettings (SettingsStore::load());
     customLookAndFeel.applyTheme (engine.getSettings());
-    title.setColour (juce::Label::textColourId, customLookAndFeel.getAccent());
+    // App brand label is always white -- not theme-tinted -- so the brand
+    // reads cleanly against any accent colour the user picks.
+    title.setColour (juce::Label::textColourId, juce::Colours::white);
 
     // React to hotplug: if a routed device disappears, gracefully drop it.
     engine.onDeviceListChanged = [this]
@@ -212,7 +222,7 @@ MainComponent::MainComponent()
                 juce::MessageBoxOptions()
                     .withIconType (juce::MessageBoxIconType::WarningIcon)
                     .withTitle ("Recover previous session?")
-                    .withMessage ("The last session of D-Core Router ended unexpectedly "
+                    .withMessage ("The last session of D-Router ended unexpectedly "
                                   "(likely a crash or force-quit).\n\n"
                                   "Would you like to restore the previous routing, "
                                   "groups and settings, or start with a blank project?")
@@ -286,7 +296,7 @@ void MainComponent::resized()
     auto top = r.removeFromTop (32);
     
     // Left Configuration Section
-    title.setBounds (top.removeFromLeft (160));
+    title.setBounds (top.removeFromLeft (240));   // wide enough for "ZDAudio D-Router" @ 22pt bold
     top.removeFromLeft (10);
     devicesButton.setBounds (top.removeFromLeft (90));
     top.removeFromLeft (4);
