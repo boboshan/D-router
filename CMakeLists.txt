@@ -15,10 +15,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(JUCE)
 
 juce_add_gui_app(dcorerouter
-    PRODUCT_NAME "dcorerouter"
-    BUNDLE_ID com.dcorerouter.app
+    PRODUCT_NAME "D-Router"
+    COMPANY_NAME "ZDAudio"
+    COMPANY_COPYRIGHT "Copyright (C) ZDAudio"
+    BUNDLE_ID com.zdaudio.drouter
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "dcorerouter routes audio between devices and needs microphone access."
+    MICROPHONE_PERMISSION_TEXT "D-Router routes audio between devices and needs microphone access."
 )
 
 juce_generate_juce_header(dcorerouter)
@@ -29,6 +31,7 @@ target_sources(dcorerouter PRIVATE
     Source/Engine/SampleRateConverter.cpp
     Source/Engine/DeviceWorker.cpp
     Source/Engine/MatrixProcessor.cpp
+    Source/Engine/WorkerPool.cpp
     Source/Engine/AudioEngine.cpp
     Source/Routing/RoutingMatrix.cpp
     Source/Routing/OutputGroupManager.cpp

@@ -1,7 +1,9 @@
-build/
-build-*/
-.cache/
-.DS_Store
+*.swp
 *.xcodeproj
+.DS_Store
+.cache/
 JuceLibraryCode/
+build-*/
+build/
 cmake-build-*/
+dist/

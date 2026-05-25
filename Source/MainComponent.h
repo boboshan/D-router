@@ -97,7 +97,7 @@ private:
     // composite & paint cost dramatically for the slider/meter-heavy UI.
     juce::OpenGLContext openGLContext;
 
-    juce::Label      title { {}, "D-Core Router" };
+    juce::Label      title { {}, "ZDAudio D-Router" };
     juce::TextButton devicesButton  { "Devices..." };
     juce::TextButton settingsButton { "Settings..." };
     juce::TextButton groupsButton    { "Groups..." };
