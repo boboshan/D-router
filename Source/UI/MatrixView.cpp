@@ -824,6 +824,27 @@ void MatrixView::scrollBarMoved (juce::ScrollBar* scrollBar, double newRangeStar
 
 void MatrixView::timerCallback()
 {
+    // Sampled perf log -- if the message thread is starved, the meter timer
+    // (configured for 30 Hz / 33 ms) will fire far less often than expected.
+    // We log every Nth tick with the wall-clock gap since the previous log
+    // so we can see the actual cadence.
+    {
+        static thread_local int counter = 0;
+        static thread_local juce::uint32 lastMs = 0;
+        if ((counter++ % 60) == 0)
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            if (lastMs != 0)
+                juce::Logger::writeToLog ("MatrixView::timer #" + juce::String (counter)
+                                          + " 60 ticks in " + juce::String (now - lastMs)
+                                          + " ms (expected ~"
+                                          + juce::String (60 * 1000
+                                              / juce::jmax (1, engine.getSettings().meterTimerHz))
+                                          + ")");
+            lastMs = now;
+        }
+    }
+
     const float decay = engine.getSettings().meterDecayFactor;
     const int nIn  = (int) inputMeters .size();
     const int nOut = (int) outputMeters.size();
