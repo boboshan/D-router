@@ -80,11 +80,13 @@ void LoadingOverlay::setProgress (int doneSteps, int totalSteps)
 
 void LoadingOverlay::hideOverlay()
 {
+    juce::Logger::writeToLog ("LoadingOverlay: hide");
     setVisible (false);
 }
 
 void LoadingOverlay::showOverlay (const juce::String& m)
 {
+    juce::Logger::writeToLog ("LoadingOverlay: show (" + m + ")");
     subtitle      = m;
     progressDone  = 0;
     progressTotal = 0;

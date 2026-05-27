@@ -13,14 +13,23 @@ CrosspointGrid::CrosspointGrid (RoutingMatrix& m) : matrix (m)
 }
 
 // ---- Hover tracking ----------------------------------------------------
-// Halo now extends infinitely in 8 directions (full row, full column,
-// both diagonals through the hovered cell), so the affected area on
-// hover change spans almost the entire grid.  Cheaper to just repaint()
-// the whole component -- paint() is already clip-bounded via
-// g.getClipBounds(), so it only touches visible cells anyway.
-void CrosspointGrid::repaintHoverHalo (int /*outIdx*/, int /*inIdx*/)
+// Halo extends in 8 directions (full row, full column, both diagonals).
+// Earlier this just called repaint() on the whole grid -- visually correct
+// but it queued a JUCE paint event covering the entire (huge) grid on
+// EVERY mouse-move-to-a-new-cell.  With the user's mouse hovering over
+// the matrix at all that flooded the message thread, dragging the visible
+// frame rate to a few FPS.  Now we invalidate only the row + column
+// stripes that actually changed -- the diagonals are visually subtle so
+// we accept the small overdraw at the row/col intersection rather than
+// invalidating the entire huge rectangle that would contain them.
+void CrosspointGrid::repaintHoverHalo (int outIdx, int inIdx)
 {
-    repaint();
+    if (outIdx < 0 || inIdx < 0) return;
+    // Full row stripe + full column stripe of the hovered cell.  These two
+    // rectangles cover every cell that has the row/column halo lit; cheap
+    // to invalidate.
+    repaint (0, inIdx  * cellSize, getWidth(), cellSize);
+    repaint (outIdx * cellSize, 0, cellSize, getHeight());
 }
 
 void CrosspointGrid::mouseMove (const juce::MouseEvent& e)
@@ -118,6 +127,20 @@ void CrosspointGrid::setDeviceBoundaries (std::vector<int> ins, std::vector<int>
 
 void CrosspointGrid::paint (juce::Graphics& g)
 {
+    // Sampled perf log -- log every Nth paint with the clip rect size so we
+    // can tell if paint() is being hammered (e.g. by hover-halo invalidation
+    // storms) or whether it's stable.
+    {
+        static thread_local int counter = 0;
+        if ((counter++ % 60) == 0)
+        {
+            const auto cb = g.getClipBounds();
+            juce::Logger::writeToLog ("CrosspointGrid::paint #" + juce::String (counter)
+                                      + " clip=" + juce::String (cb.getWidth()) + "x"
+                                      + juce::String (cb.getHeight()));
+        }
+    }
+
     // Background.
     g.fillAll (juce::Colour::fromRGB (12, 12, 14));
 
