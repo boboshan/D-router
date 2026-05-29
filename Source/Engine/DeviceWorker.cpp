@@ -74,6 +74,12 @@ bool DeviceWorker::open (const EngineSettings& settings)
     const double devSr = device->getCurrentSampleRate();
     const int    devBuf = device->getCurrentBufferSizeSamples();
 
+    // Remember the format we configure SRCs/rings for, so audioDeviceAboutToStart
+    // can detect an OS-driven renegotiation later and ask for a restart.
+    configuredDeviceRate = devSr;
+    configuredBufferSize = devBuf;
+    formatChanged.store (false, std::memory_order_release);
+
     // Ring sizing comes from settings.  No magic constants here.
     // Per-channel cap so a misconfigured multiplier (very large engineBlock x
     // very large mult, or a huge ratio between device and engine rates) can't
@@ -182,7 +188,33 @@ int DeviceWorker::getOutputSrcLatencyDeviceSamples() const
     return worst;
 }
 
-void DeviceWorker::audioDeviceAboutToStart (juce::AudioIODevice*) {}
+void DeviceWorker::audioDeviceAboutToStart (juce::AudioIODevice* dev)
+{
+    // CoreAudio calls this on the very first start (where the live format
+    // matches what open() configured -> no-op) AND whenever it restarts the
+    // stream after a format renegotiation -- e.g. another app opened this
+    // shared device and the OS flipped its nominal sample rate.  In that
+    // second case our SRCs/rings are still set for the OLD rate, so the
+    // signal silently drifts (crackling).  Detect it and flag the engine
+    // to do a preserve-state restart, which re-reads the new format.
+    if (dev == nullptr || configuredDeviceRate <= 0.0) return;
+
+    const double liveSr  = dev->getCurrentSampleRate();
+    const int    liveBuf = dev->getCurrentBufferSizeSamples();
+    const bool srMoved  = std::abs (liveSr - configuredDeviceRate) > 1.0;
+    const bool bufMoved = liveBuf > 0 && liveBuf != configuredBufferSize;
+
+    if (srMoved || bufMoved)
+    {
+        formatChanged.store (true, std::memory_order_release);
+        juce::Logger::writeToLog ("DeviceWorker '" + requestedName
+            + "': format renegotiated by the OS (configured "
+            + juce::String (configuredDeviceRate, 0) + " Hz / "
+            + juce::String (configuredBufferSize) + " spl  ->  live "
+            + juce::String (liveSr, 0) + " Hz / " + juce::String (liveBuf)
+            + " spl).  Requesting preserve-state restart to re-sync SRC.");
+    }
+}
 void DeviceWorker::audioDeviceStopped() {}
 void DeviceWorker::audioDeviceError (const juce::String& msg) { lastError = msg; }
 

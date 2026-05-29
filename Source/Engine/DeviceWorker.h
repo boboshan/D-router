@@ -48,6 +48,15 @@ public:
     // Hi-res ms timestamp of the most recent underrun, or 0 if none yet.
     double getLastUnderrunMs() const noexcept { return lastUnderrunMs.load (std::memory_order_relaxed); }
 
+    // True once CoreAudio has renegotiated this device's sample rate or
+    // buffer size out from under us (typically because another app — Music,
+    // a browser, etc. — opened the same shared device and the OS switched
+    // its nominal rate).  Our SRCs / rings were configured for the rate at
+    // open() time, so a silent drift starts → crackling.  The engine polls
+    // this from the message thread and does a preserve-state restart to
+    // re-sync.  See audioDeviceAboutToStart().
+    bool hasFormatChanged() const noexcept { return formatChanged.load (std::memory_order_acquire); }
+
     // Zero the diagnostic counters.  Called from the UI thread when the
     // user clicks "Reset" on the status panel; the audio callback may
     // race and re-increment, but that just means the new sample window
@@ -107,6 +116,14 @@ private:
     std::atomic<uint64_t> inputOverruns   { 0 };
     std::atomic<uint64_t> outputUnderruns { 0 };
     std::atomic<double>   lastUnderrunMs  { 0.0 };
+
+    // The device sample rate / buffer size we actually configured our SRCs
+    // and rings for, captured at open().  audioDeviceAboutToStart compares
+    // the device's live values against these to detect an OS-driven
+    // renegotiation (another app changed the shared device's nominal rate).
+    double                configuredDeviceRate = 0.0;
+    int                   configuredBufferSize = 0;
+    std::atomic<bool>     formatChanged { false };
 
     // Set true after the first audioDeviceIOCallback fires on the audio
     // thread.  The message thread can poll this from a UI timer to surface

@@ -85,7 +85,8 @@ static bool tryConfigureLayout (juce::AudioPluginInstance& p,
 }
 
 void MultiChannelPluginHost::setPlugin (std::unique_ptr<juce::AudioPluginInstance> p,
-                                        const juce::AudioChannelSet& desiredLayout)
+                                        const juce::AudioChannelSet& desiredLayout,
+                                        const juce::MemoryBlock* stateToRestore)
 {
     bool prepareOk = true;
     if (p != nullptr)
@@ -97,6 +98,23 @@ void MultiChannelPluginHost::setPlugin (std::unique_ptr<juce::AudioPluginInstanc
             tryConfigureLayout (*raw, layoutCopy);
             raw->prepareToPlay (sampleRate, blockSize);
         });
+
+        if (! prepareOk)
+            juce::Logger::writeToLog ("[group plugin " + raw->getName()
+                                      + "] prepare FAILED on install -- marked broken");
+
+        // Canonical order: apply saved state AFTER the instance is prepared
+        // but BEFORE it goes live to the audio thread.  See PluginHost.
+        if (prepareOk && stateToRestore != nullptr && stateToRestore->getSize() > 0)
+        {
+            const void* data = stateToRestore->getData();
+            const int   size = (int) stateToRestore->getSize();
+            const bool stateOk = runGuarded ("setStateInformation", raw,
+                ^{ raw->setStateInformation (data, size); });
+            if (! stateOk)
+                juce::Logger::writeToLog ("[group plugin " + raw->getName()
+                    + "] setStateInformation FAILED -- keeping default state (still active)");
+        }
     }
 
     std::unique_ptr<juce::AudioPluginInstance> old;

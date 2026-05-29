@@ -45,11 +45,16 @@ private:
     // press just re-mutes everything fresh.
     void panicActivate();
     void panicRelease();
+    void panicResetRestart();   // RESET button: restore mutes + preserve-state restart
     void updatePanicButtonAppearance();
     bool inPanic = false;
     std::vector<unsigned char> savedInputMutes;
     std::vector<unsigned char> savedOutputMutes;
     Snapshot gatherCurrentSnapshot() const;
+    // Per-channel FX harvest only (no group chains, no UI state).  Calls
+    // getStateInformation() on every AU, so the caller MUST ensure the matrix
+    // processor is stopped first (see applyDeviceSelection's worker thread).
+    std::vector<Snapshot::ChannelChain> harvestChannelChains() const;
     void     applySnapshot (const Snapshot& s);
     void     saveSnapshotInteractive();
     void     loadSnapshotInteractive();
@@ -151,6 +156,11 @@ private:
     juce::TextButton logsButton     { "Logs..." };
     juce::TextButton layoutButton   { "Layout..." };   // matrix collapse/expand menu
     juce::TextButton stopButton     { "PANIC" };
+    // Appears beside PANIC only while panic is engaged.  Restores the
+    // pre-panic mute state, then does a preserve-state engine restart --
+    // the in-app "turn it off and on again" that also clears an OS-driven
+    // device-format desync without quitting the app.
+    juce::TextButton resetButton    { "RESET" };
 
     // Top Navigation Tabs
     enum Tab { RoutingTab, GroupsTab, StatusTab };
