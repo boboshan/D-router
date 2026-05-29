@@ -72,7 +72,8 @@ void PluginHost::prepare (double sr, int bs)
     }
 }
 
-void PluginHost::setPluginAt (int slotIdx, std::unique_ptr<juce::AudioPluginInstance> p)
+void PluginHost::setPluginAt (int slotIdx, std::unique_ptr<juce::AudioPluginInstance> p,
+                              const juce::MemoryBlock* stateToRestore)
 {
     if (slotIdx < 0 || slotIdx >= kNumSlots) return;
     auto& s = slots[(size_t) slotIdx];
@@ -81,8 +82,35 @@ void PluginHost::setPluginAt (int slotIdx, std::unique_ptr<juce::AudioPluginInst
     if (p != nullptr)
     {
         auto* raw = p.get();
+        // Canonical AU restore order, performed while the instance is still
+        // private to this (message) thread and invisible to the audio thread:
+        //   1. releaseResources + prepareToPlay  (make it ready to run)
+        //   2. setStateInformation               (apply saved state)
+        // The OLD restore path called setStateInformation on the raw,
+        // UNPREPARED instance and THEN re-prepared here -- for stateful AUs
+        // that either discarded the state or threw an NSException out of
+        // prepareToPlay, which marked the slot broken and left the plugin
+        // loaded-but-silent until a manual reload.
         prepareOk = runGuarded ("prepare", raw,
             ^{ raw->releaseResources(); raw->prepareToPlay (sampleRate, blockSize); });
+
+        if (! prepareOk)
+            juce::Logger::writeToLog ("[plugin " + raw->getName()
+                                      + "] prepareToPlay FAILED on install -- slot marked broken");
+
+        if (prepareOk && stateToRestore != nullptr && stateToRestore->getSize() > 0)
+        {
+            const void* data = stateToRestore->getData();
+            const int   size = (int) stateToRestore->getSize();
+            const bool stateOk = runGuarded ("setStateInformation", raw,
+                ^{ raw->setStateInformation (data, size); });
+            if (! stateOk)
+                juce::Logger::writeToLog ("[plugin " + raw->getName()
+                    + "] setStateInformation FAILED -- keeping default state (still active)");
+            // A state-restore failure deliberately does NOT mark the slot
+            // broken: a prepared plugin at default state is far better than a
+            // disabled, silent slot.
+        }
     }
 
     std::unique_ptr<juce::AudioPluginInstance> old;

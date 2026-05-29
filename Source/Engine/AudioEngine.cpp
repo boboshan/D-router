@@ -241,6 +241,12 @@ double AudioEngine::getMostRecentUnderrunMs() const noexcept
     return m;
 }
 
+bool AudioEngine::anyDeviceFormatChanged() const noexcept
+{
+    for (auto& w : workers) if (w->hasFormatChanged()) return true;
+    return false;
+}
+
 void AudioEngine::resetXrunCounters() noexcept
 {
     for (auto& w : workers) w->resetXrunCounters();

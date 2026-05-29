@@ -120,6 +120,11 @@ public:
     uint64_t getTotalOutputUnderruns() const noexcept;
     // Most recent underrun hi-res ms timestamp (0 if none).
     double   getMostRecentUnderrunMs() const noexcept;
+
+    // True if ANY open device's sample rate / buffer size was renegotiated
+    // by the OS after we opened it (another app grabbing the shared device).
+    // The host polls this and does a preserve-state restart to re-sync.
+    bool     anyDeviceFormatChanged() const noexcept;
     // Zero every device worker's xrun / underrun / lastUnderrun counters.
     // Useful as a UI button: lets the user clear cold-start xruns once the
     // engine has stabilised so the gauge reflects only live problems.

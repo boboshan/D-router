@@ -91,6 +91,16 @@ MainComponent::MainComponent()
     loadButton    .onClick = [this] { loadSnapshotInteractive(); };
     stopButton    .onClick = [this] { if (inPanic) panicRelease(); else panicActivate(); };
     stopButton    .setTooltip ("Mute every input and output.  Click again to restore the prior state.");
+
+    // RESET: restore pre-panic mutes, then preserve-state engine restart.
+    // Only visible while panic is engaged.
+    resetButton.setColour (juce::TextButton::buttonColourId, juce::Colour::fromRGB (40, 90, 110));
+    resetButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour::fromRGB (40, 90, 110));
+    resetButton.setTooltip ("Restart the audio engine while keeping your routing, FX and groups.  "
+                            "Use this if audio is crackling (e.g. after another app changed the "
+                            "device sample rate) -- it re-syncs without quitting.");
+    resetButton.onClick = [this] { panicResetRestart(); };
+    resetButton.setVisible (false);
     updatePanicButtonAppearance();
     groupsButton.onClick = [this]
     {
@@ -121,6 +131,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (logsButton);
     addAndMakeVisible (layoutButton);
     addAndMakeVisible (stopButton);
+    addChildComponent (resetButton);   // visibility toggled with panic state
 
     logsButton.onClick = [] { LogViewerDialog::launch(); };
 
@@ -436,8 +447,13 @@ void MainComponent::resized()
     top.removeFromLeft (4);
     layoutButton  .setBounds (top.removeFromLeft (90));
 
-    // Right Session Section (Save, Load, Logs, PANIC)
+    // Right Session Section (Save, Load, Logs, [Reset], PANIC)
     stopButton.setBounds (top.removeFromRight (60));
+    if (resetButton.isVisible())
+    {
+        top.removeFromRight (4);
+        resetButton.setBounds (top.removeFromRight (60));
+    }
     top.removeFromRight (12); // Extra separation for safety
     logsButton.setBounds (top.removeFromRight (70));
     top.removeFromRight (4);
@@ -613,6 +629,22 @@ int MainComponent::cards_default_width() { return 800; }
 void MainComponent::refreshStatus()
 {
     statusPanel.refreshNow();
+
+    // Watchdog: if the OS renegotiated a device's sample rate / buffer size
+    // out from under us (e.g. Music opened the same shared output and flipped
+    // its nominal rate), our SRCs are now misconfigured and the audio
+    // crackles.  Auto-recover with a preserve-state restart -- the same path
+    // the Reset button uses.  Guarded by isReconfiguring so we don't stack
+    // restarts; the fresh DeviceWorkers come up with formatChanged=false so
+    // this fires once per actual change, not in a loop.
+    if (! isReconfiguring.load()
+        && ! currentSpecs.empty()
+        && engine.anyDeviceFormatChanged())
+    {
+        juce::Logger::writeToLog ("MainComponent: device format change detected "
+                                  "-- auto preserve-state restart to re-sync SRC.");
+        applyDeviceSelection (currentSpecs);
+    }
 }
 
 void MainComponent::stopEngine()
@@ -672,6 +704,28 @@ void MainComponent::updatePanicButtonAppearance()
                           inPanic ? juce::Colour::fromRGB (180, 30, 30)
                                   : juce::Colour::fromRGB (50, 50, 56));
     stopButton.repaint();
+
+    // RESET appears beside PANIC only while panic is engaged.  Re-run the
+    // toolbar layout so the button slides in/out without leaving a gap.
+    if (resetButton.isVisible() != inPanic)
+    {
+        resetButton.setVisible (inPanic);
+        resized();
+    }
+}
+
+void MainComponent::panicResetRestart()
+{
+    // 1. Restore the pre-panic mute state FIRST, so the restart harvests the
+    //    user's real routing -- not the all-muted panic snapshot (otherwise
+    //    everything would come back muted).
+    if (inPanic) panicRelease();
+
+    // 2. Preserve-state engine restart: re-opens every device (re-reading the
+    //    current OS sample rate / buffer size, fixing any crackle) while
+    //    keeping routing, trims, FX and groups intact.
+    if (! currentSpecs.empty())
+        applyDeviceSelection (currentSpecs);
 }
 
 void MainComponent::openDeviceDialog()
@@ -713,21 +767,18 @@ void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> n
     // Group plugins survive automatically because OutputGroupManager is
     // not touched by engine.stop().
     //
-    // Skip when pendingSnap is already valid -- that means we're being
-    // called from applySnapshot, which owns pendingSnap and will restore
-    // the snapshot's own (different) plugin chains.
-    if (! pendingSnap.valid)
-    {
-        auto snap = gatherCurrentSnapshot();
-        pendingSnap.channelChains = std::move (snap.channelChains);
-        // Note: groupChains intentionally left empty -- the actual group
-        // plugin objects survive the restart in-place, so re-instantiating
-        // them would double-load (and double the CPU cost) for nothing.
-        pendingSnap.valid = true;
-        juce::Logger::writeToLog ("applyDeviceSelection: preserved "
-                                  + juce::String ((int) pendingSnap.channelChains.size())
-                                  + " channel FX chain(s) across restart");
-    }
+    // The actual harvest (gatherCurrentSnapshot -> getStateInformation on
+    // every AU) is DEFERRED to the worker thread below.  Reading plugin state
+    // here -- on the message thread, while the matrix processor is still
+    // running -- is UB per JUCE (concurrent with processBlock) and can yield a
+    // torn state blob for heavy stateful AUs (e.g. soothe3).  The worker
+    // harvests only AFTER its fade-out + stopProcessor(), mirroring the safe
+    // ~MainComponent shutdown order.
+    //
+    // preserveChains is false on the applySnapshot() path -- there pendingSnap
+    // is already valid and owns the snapshot's own (different) plugin chains,
+    // which must not be overwritten by a harvest of the live engine.
+    const bool preserveChains = ! pendingSnap.valid;
 
     // Close any open per-channel plugin editors NOW (message thread) before
     // the worker tears down PluginHosts.  Skipping this lets ~PluginEditor
@@ -766,12 +817,14 @@ void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> n
     if (reconfigThread.joinable()) reconfigThread.join();
 
     auto specs = std::move (newSpecs);
-    reconfigThread = std::thread ([this, specs, preserved]
+    reconfigThread = std::thread ([this, specs, preserved, preserveChains]
     {
         // Graceful fade-out before tearing the engine down.  Setting all
         // output trims to 0 makes the smoothing in MatrixProcessor ramp
         // every active route to silence; we then sleep long enough (~5*tau)
-        // for the ramp to complete before stopping devices.
+        // for the ramp to complete before stopping devices.  This MUST run
+        // before stopProcessor() below -- once the matrix thread is halted no
+        // processBlock fires and the ramp can't advance (-> click).
         {
             const int smoothMs = juce::jmax (5, engine.getSettings().gainSmoothingMs);
             auto& mtx = engine.getRoutingMatrix();
@@ -780,16 +833,48 @@ void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> n
             std::this_thread::sleep_for (std::chrono::milliseconds (smoothMs * 5));
         }
 
+        // The fade has completed, so halt the matrix-processing thread BEFORE
+        // reading any plugin state.  After stopProcessor() no processBlock()
+        // can fire, so harvestChannelChains() -> getStateInformation() is
+        // race-free (the same ordering ~MainComponent uses).  Plugin hosts stay
+        // alive until engine.stop() just below.  We harvest into a LOCAL and
+        // hand it to the message thread via callAsync -- writing pendingSnap
+        // from this worker thread would race the re-entrancy reset
+        // (pendingSnap = {}) at the top of applyDeviceSelection, which a
+        // CoreAudio device-hotplug callback can trigger mid-reconfigure.
+        engine.stopProcessor();
+        std::vector<Snapshot::ChannelChain> harvestedChains;
+        if (preserveChains)
+        {
+            harvestedChains = harvestChannelChains();
+            juce::Logger::writeToLog ("applyDeviceSelection: preserved "
+                                      + juce::String ((int) harvestedChains.size())
+                                      + " channel FX chain(s) across restart");
+        }
+
         engine.stop();
         const bool started = specs.empty() ? true : engine.start (specs);
 
-        juce::MessageManager::callAsync ([this, specs, preserved, started]
+        juce::MessageManager::callAsync (
+            [this, specs, preserved, started, preserveChains,
+             chainsToRestore = std::move (harvestedChains)]() mutable
         {
             currentSpecs = specs;
             if (! specs.empty() && ! started)
                 {}   // failure is visible via empty matrix + status panel
             else
                 restoreMatrixByName (preserved);
+
+            // Settings-apply (non-snapshot) path: publish the chains the worker
+            // harvested after stopProcessor into pendingSnap NOW, on the message
+            // thread, so the drain below re-instantiates them.  Doing it here
+            // (not in the worker) keeps pendingSnap single-threaded.  groupChains
+            // stays empty -- group plugin objects survive the restart in-place.
+            if (preserveChains)
+            {
+                pendingSnap.channelChains = std::move (chainsToRestore);
+                pendingSnap.valid = true;
+            }
 
             // Snapshot apply (cold-start or Load...): drain pendingSnap NOW,
             // after engine.start() resized the matrix to the new (in, out)
@@ -873,6 +958,56 @@ namespace
         for (auto& e : layoutTable()) if (n == e.name) return e.set;
         return juce::AudioChannelSet::stereo();
     }
+
+    Snapshot::PluginSlotState gatherPluginSlot (juce::AudioPluginInstance* p, bool bypassed)
+    {
+        Snapshot::PluginSlotState ps;
+        if (p == nullptr) return ps;
+        // Both calls go through SafePluginOps -- they NSException-catch the
+        // AU bridge.  If either throws, we just save an empty slot record;
+        // snapshot save mustn't take the app down.
+        dcr::safe::getPluginDescriptionXml (*p, ps.descriptionXml);
+        juce::MemoryBlock blob;
+        dcr::safe::getStateInformation (*p, blob);
+        if (blob.getSize() > 0)
+            ps.stateB64 = juce::Base64::toBase64 (blob.getData(), blob.getSize());
+        ps.bypassed = bypassed;
+        return ps;
+    }
+}
+
+std::vector<Snapshot::ChannelChain> MainComponent::harvestChannelChains() const
+{
+    // NOTE: getStateInformation() (inside gatherPluginSlot) is UB when run
+    // concurrently with the audio thread's processBlock(); callers must stop
+    // the matrix processor first.  This intentionally omits group chains -- the
+    // group plugin objects survive an engine restart in-place, so re-saving and
+    // re-instantiating them would double-load for nothing.
+    std::vector<Snapshot::ChannelChain> chains;
+    auto& engineRef = const_cast<AudioEngine&> (engine);
+    const auto& m = engine.getRoutingMatrix();
+    const int nIn  = m.getNumInputs();
+    const int nOut = m.getNumOutputs();
+
+    auto gatherChain = [&] (PluginHost* host, int globalIdx, bool isInput)
+    {
+        if (host == nullptr) return;
+        Snapshot::ChannelChain cc;
+        cc.globalIdx = globalIdx;
+        cc.isInput   = isInput;
+        cc.slots.resize ((size_t) PluginHost::kNumSlots);
+        bool any = false;
+        for (int sl = 0; sl < PluginHost::kNumSlots; ++sl)
+        {
+            cc.slots[(size_t) sl] = gatherPluginSlot (host->getPluginAt (sl), host->isBypassedAt (sl));
+            if (! cc.slots[(size_t) sl].isEmpty()) any = true;
+        }
+        if (any) chains.push_back (std::move (cc));
+    };
+
+    for (int ch = 0; ch < nIn;  ++ch) gatherChain (engineRef.getInputPluginHost (ch), ch, true);
+    for (int ch = 0; ch < nOut; ++ch) gatherChain (engineRef.getPluginHost (ch),      ch, false);
+    return chains;
 }
 
 Snapshot MainComponent::gatherCurrentSnapshot() const
@@ -928,54 +1063,7 @@ Snapshot MainComponent::gatherCurrentSnapshot() const
         }
 
     // ===== Plugin chains: per-channel ========================================
-    auto gatherSlot = [] (juce::AudioPluginInstance* p, bool bypassed) -> Snapshot::PluginSlotState
-    {
-        Snapshot::PluginSlotState ps;
-        if (p == nullptr) return ps;
-        // Both calls go through SafePluginOps -- they NSException-catch the
-        // AU bridge.  If either throws, we just save an empty slot record;
-        // snapshot save mustn't take the app down.
-        dcr::safe::getPluginDescriptionXml (*p, ps.descriptionXml);
-        juce::MemoryBlock blob;
-        dcr::safe::getStateInformation (*p, blob);
-        if (blob.getSize() > 0)
-            ps.stateB64 = juce::Base64::toBase64 (blob.getData(), blob.getSize());
-        ps.bypassed = bypassed;
-        return ps;
-    };
-
-    for (int ch = 0; ch < nIn; ++ch)
-    {
-        auto* host = const_cast<AudioEngine&> (engine).getInputPluginHost (ch);
-        if (host == nullptr) continue;
-        Snapshot::ChannelChain cc;
-        cc.globalIdx = ch;
-        cc.isInput   = true;
-        cc.slots.resize ((size_t) PluginHost::kNumSlots);
-        bool any = false;
-        for (int sl = 0; sl < PluginHost::kNumSlots; ++sl)
-        {
-            cc.slots[(size_t) sl] = gatherSlot (host->getPluginAt (sl), host->isBypassedAt (sl));
-            if (! cc.slots[(size_t) sl].isEmpty()) any = true;
-        }
-        if (any) s.channelChains.push_back (std::move (cc));
-    }
-    for (int ch = 0; ch < nOut; ++ch)
-    {
-        auto* host = const_cast<AudioEngine&> (engine).getPluginHost (ch);
-        if (host == nullptr) continue;
-        Snapshot::ChannelChain cc;
-        cc.globalIdx = ch;
-        cc.isInput   = false;
-        cc.slots.resize ((size_t) PluginHost::kNumSlots);
-        bool any = false;
-        for (int sl = 0; sl < PluginHost::kNumSlots; ++sl)
-        {
-            cc.slots[(size_t) sl] = gatherSlot (host->getPluginAt (sl), host->isBypassedAt (sl));
-            if (! cc.slots[(size_t) sl].isEmpty()) any = true;
-        }
-        if (any) s.channelChains.push_back (std::move (cc));
-    }
+    s.channelChains = harvestChannelChains();
 
     // ===== Plugin chains: per-group ==========================================
     auto gatherGroupChains = [&] (auto& mgr, bool isInput, std::vector<Snapshot::GroupChain>& out)
@@ -993,7 +1081,7 @@ Snapshot MainComponent::gatherCurrentSnapshot() const
             {
                 if (auto& host = g->pluginSlots[sl])
                 {
-                    gc.slots[sl] = gatherSlot (host->getPlugin(), host->isBypassed());
+                    gc.slots[sl] = gatherPluginSlot (host->getPlugin(), host->isBypassed());
                     if (! gc.slots[sl].isEmpty()) any = true;
                 }
             }
@@ -1199,10 +1287,16 @@ void MainComponent::processNextPluginLoad()
 
             if (instance != nullptr)
             {
-                if (j.state.getSize() > 0)
-                    dcr::safe::setStateInformation (*instance,
-                                                    j.state.getData(),
-                                                    (int) j.state.getSize());
+                // IMPORTANT: do NOT call setStateInformation on the raw,
+                // unprepared instance here.  The host's setPluginAt / setPlugin
+                // now applies the saved state in the canonical order
+                // (prepareToPlay THEN setStateInformation) while the instance
+                // is still off the audio thread.  The old "set state then let
+                // setPluginAt re-prepare" sequence discarded the state or threw
+                // out of stateful AUs (soothe3 etc.), leaving the slot broken
+                // and silent until a manual reload.
+                const juce::MemoryBlock* statePtr =
+                    j.state.getSize() > 0 ? &j.state : nullptr;
 
                 if (j.kind == PendingPluginLoad::Kind::ChannelSlot)
                 {
@@ -1211,7 +1305,7 @@ void MainComponent::processNextPluginLoad()
                                     : engine.getPluginHost      (j.globalChannelIdx);
                     if (host != nullptr)
                     {
-                        host->setPluginAt (j.slotIdx, std::move (instance));
+                        host->setPluginAt (j.slotIdx, std::move (instance), statePtr);
                         host->setBypassedAt (j.slotIdx, j.bypassed);
                         matrixView.updateFxButtonAppearance (j.isInputChannel,
                                                              j.globalChannelIdx);
@@ -1229,7 +1323,7 @@ void MainComponent::processNextPluginLoad()
                         auto& host = g->pluginSlots[(size_t) j.slotIdx];
                         if (host)
                         {
-                            host->setPlugin (std::move (instance), j.channelSet);
+                            host->setPlugin (std::move (instance), j.channelSet, statePtr);
                             host->setBypassed (j.bypassed);
                             if (j.isInputGroup) inputGroupPanel.rebuild();
                             else                groupPanel.rebuild();

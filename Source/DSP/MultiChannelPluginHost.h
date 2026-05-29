@@ -18,8 +18,13 @@ public:
 
     // Loads the new plugin off the audio thread.  Attempts to configure the
     // plugin's buses to a discrete N-channel layout matching `numChannels`.
+    // If stateToRestore is non-null/non-empty its bytes are applied via
+    // setStateInformation to the freshly-PREPARED instance before it goes
+    // live -- canonical AU restore order (configure+prepareToPlay THEN
+    // setStateInformation).  See PluginHost::setPluginAt for the rationale.
     void setPlugin (std::unique_ptr<juce::AudioPluginInstance> p,
-                    const juce::AudioChannelSet& desiredLayout);
+                    const juce::AudioChannelSet& desiredLayout,
+                    const juce::MemoryBlock* stateToRestore = nullptr);
 
     void clearPlugin();
 

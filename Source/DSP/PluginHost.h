@@ -20,7 +20,16 @@ public:
 
     void prepare (double sr, int blockSize);
 
-    void setPluginAt (int slotIdx, std::unique_ptr<juce::AudioPluginInstance> p);
+    // Install (or clear with nullptr) a plugin in a slot.  If stateToRestore
+    // is non-null and non-empty, its bytes are applied via setStateInformation
+    // to the freshly-PREPARED instance BEFORE it goes live to the audio
+    // thread -- the canonical AU restore order (prepareToPlay then
+    // setStateInformation).  Passing the state here instead of calling
+    // setStateInformation on the raw instance first avoids the bug where a
+    // re-prepare discarded the state (or threw out of a stateful AU and
+    // marked the slot broken, leaving it loaded-but-silent).
+    void setPluginAt (int slotIdx, std::unique_ptr<juce::AudioPluginInstance> p,
+                      const juce::MemoryBlock* stateToRestore = nullptr);
     void clearSlot   (int slotIdx) { setPluginAt (slotIdx, nullptr); }
 
     // Swap two slots' plugin + bypass + cpu-load state.  Both slot locks are
