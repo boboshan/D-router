@@ -182,10 +182,31 @@ PluginEditorWindow::~PluginEditorWindow()
     if (paramLink != nullptr)
         plugin.removeListener (paramLink.get());
 
-    // Detach the editor before deleting the unique_ptr - the plugin still
-    // owns the editor's processor reference.
+    // Hide the window FIRST so a GPU-backed plugin view (soothe3, Youlean,
+    // FabFilter, ...) isn't being composited while its NSView is detached /
+    // destroyed.  Tearing those views down while they're still on screen has
+    // crashed the app (SIGSEGV deep in the AU's own view teardown).
+    setVisible (false);
+
+   #if JUCE_MAC
+    // Guard the teardown: some AU editors throw NSException out of their
+    // Cocoa view destruction.  If that happens, LEAK the editor (and its
+    // view) rather than let the unhandled exception take the whole app down
+    // -- a small leak on plugin-window close is vastly better than a crash
+    // that kills every audio route.
+    @try {
+        clearContentComponent();   // detach the (live) editor from the window
+        editor.reset();            // then destroy it
+    }
+    @catch (NSException* ex) {
+        DBG ("[plugin editor] NSException during teardown ("
+             << plugin.getName() << "): " << [[ex reason] UTF8String]);
+        editor.release();          // intentional leak -- safer than crashing
+    }
+   #else
     clearContentComponent();
     editor.reset();
+   #endif
 }
 
 void PluginEditorWindow::closeButtonPressed()
