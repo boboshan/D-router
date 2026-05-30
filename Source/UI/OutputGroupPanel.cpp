@@ -337,9 +337,21 @@ void OutputGroupPanel::Card::openEditorFor (int slotIdx)
     // the user exactly which plugin to blame.
     const auto pname = host->getPlugin()->getName();
     juce::Logger::writeToLog ("opening group plugin editor [" + ctx + "] = " + pname);
+    // The close callback defers the window deletion (can't delete a window
+    // from inside its own closeButtonPressed).  Capture a SafePointer to the
+    // Card, not a raw `this`: a rebuild() can destroy this Card between the
+    // user clicking X and the async firing, which would otherwise be a
+    // use-after-free on a dead Card.
+    juce::Component::SafePointer<Card> safeThis (this);
     editorWindows[(size_t) slotIdx].reset (new PluginEditorWindow (
         *host->getPlugin(),
-        [this, slotIdx] { juce::MessageManager::callAsync ([this, slotIdx] { closeEditorFor (slotIdx); }); },
+        [safeThis, slotIdx]
+        {
+            juce::MessageManager::callAsync ([safeThis, slotIdx]
+            {
+                if (auto* c = safeThis.getComponent()) c->closeEditorFor (slotIdx);
+            });
+        },
         ctx));
     juce::Logger::writeToLog ("opened group plugin editor [" + ctx + "] = " + pname);
 }
