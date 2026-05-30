@@ -1,15 +1,21 @@
 #include "DSP/Builtin/InternalPluginFormat.h"
 #include "DSP/Builtin/BuiltinProcessors.h"
 #include "DSP/Builtin/ParametricEqEditor.h"
+#include "DSP/Builtin/CompressorEditor.h"
 
 namespace dcr::builtin
 {
 
-// Out-of-line so ParametricEQ (in BuiltinProcessors.h) can return the editor
-// type (in ParametricEqEditor.h) without a header cycle.
+// Out-of-line so the processors (in BuiltinProcessors.h) can return their
+// editor types (separate headers) without a header cycle.
 juce::AudioProcessorEditor* ParametricEQ::createEditor()
 {
     return new ParametricEqEditor (*this);
+}
+
+juce::AudioProcessorEditor* CompressorProcessor::createEditor()
+{
+    return new CompressorEditor (*this);
 }
 
 namespace
@@ -27,6 +33,7 @@ namespace
         if (id == ids::tone)       return std::make_unique<ToneProcessor>();
         if (id == ids::tremolo)    return std::make_unique<TremoloProcessor>();
         if (id == ids::width)      return std::make_unique<StereoWidthProcessor>();
+        if (id == ids::deesser)    return std::make_unique<DeEsserProcessor>();
         return nullptr;
     }
 }
@@ -37,7 +44,7 @@ juce::Array<juce::PluginDescription> InternalPluginFormat::getBuiltinDescription
     const char* allIds[] = {
         ids::gain, ids::filter, ids::eq, ids::compressor,
         ids::gate, ids::limiter, ids::reverb, ids::delay, ids::tone,
-        ids::tremolo, ids::width
+        ids::tremolo, ids::width, ids::deesser
     };
     for (auto* id : allIds)
         if (auto p = makeById (id))

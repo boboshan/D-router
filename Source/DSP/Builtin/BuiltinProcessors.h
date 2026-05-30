@@ -4,6 +4,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -40,6 +41,7 @@ namespace ids
     static constexpr const char* tone       = "builtin:tone";
     static constexpr const char* tremolo    = "builtin:tremolo";
     static constexpr const char* width      = "builtin:width";
+    static constexpr const char* deesser    = "builtin:deesser";
 }
 
 // ---------------------------------------------------------------------------
@@ -472,11 +474,20 @@ public:
         return l;
     }
 
+    // Custom editor: transfer curve + gain-reduction meter (defined in
+    // CompressorEditor.h; createEditor implemented in InternalPluginFormat.cpp).
+    juce::AudioProcessorEditor* createEditor() override;
+
+    // Live gain reduction in dB (<= 0), for the GR meter.  Peak over the
+    // last processed block.
+    float getGainReductionDb() const noexcept { return grReadout.load (std::memory_order_relaxed); }
+
 protected:
     void prepareDsp (double sr, int, int) override
     {
         dspSampleRate = sr;
         envelope = 0.0f;
+        grReadout.store (0.0f, std::memory_order_relaxed);
     }
 
     void processDsp (juce::AudioBuffer<float>& buffer) override
@@ -493,6 +504,8 @@ protected:
         const float relMs = juce::jmax (1.0f, param ("release"));
         const float attCoeff = std::exp (-1.0f / (float) (attMs * 0.001 * dspSampleRate));
         const float relCoeff = std::exp (-1.0f / (float) (relMs * 0.001 * dspSampleRate));
+
+        float blockMinGr = 0.0f;   // most-negative gain reduction this block
 
         for (int i = 0; i < ns; ++i)
         {
@@ -519,15 +532,19 @@ protected:
             {
                 grDb = -((overDb) * (1.0f - 1.0f / ratio));
             }
+            blockMinGr = juce::jmin (blockMinGr, grDb);
 
             const float gain = std::pow (10.0f, grDb * 0.05f) * makeupLin;
             for (int ch = 0; ch < nch; ++ch)
                 buffer.getWritePointer (ch)[i] *= gain;
         }
+
+        grReadout.store (blockMinGr, std::memory_order_relaxed);
     }
 
 private:
     float envelope = 0.0f;
+    std::atomic<float> grReadout { 0.0f };
 };
 
 // ===========================================================================
@@ -954,6 +971,113 @@ protected:
             }
         }
     }
+};
+
+// ===========================================================================
+// 12. De-esser -- splits a high band, ducks it when sibilance exceeds the
+//     threshold (channel-linked detector, clamped to a max reduction range).
+// ===========================================================================
+class DeEsserProcessor : public BuiltinProcessor
+{
+public:
+    DeEsserProcessor() : BuiltinProcessor (ids::deesser, "De-esser", createLayout()) {}
+
+    static APVTS::ParameterLayout createLayout()
+    {
+        APVTS::ParameterLayout l;
+        l.add (std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { "freq", 1 }, "Frequency",
+            juce::NormalisableRange<float> (2000.0f, 16000.0f, 1.0f, 0.5f), 6000.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("Hz")));
+        l.add (std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { "threshold", 1 }, "Threshold",
+            juce::NormalisableRange<float> (-60.0f, 0.0f, 0.1f), -30.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("dB")));
+        l.add (std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { "range", 1 }, "Range",
+            juce::NormalisableRange<float> (-24.0f, 0.0f, 0.1f), -12.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("dB")));
+        l.add (std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { "attack", 1 }, "Attack",
+            juce::NormalisableRange<float> (0.1f, 20.0f, 0.1f, 0.5f), 2.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("ms")));
+        l.add (std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID { "release", 1 }, "Release",
+            juce::NormalisableRange<float> (5.0f, 200.0f, 1.0f, 0.5f), 60.0f,
+            juce::AudioParameterFloatAttributes().withLabel ("ms")));
+        return l;
+    }
+
+protected:
+    void prepareDsp (double sr, int, int numChannels) override
+    {
+        dspSampleRate = sr;
+        hp.clear();
+        for (int i = 0; i < numChannels; ++i)
+        {
+            auto f = std::make_unique<juce::dsp::IIR::Filter<float>>();
+            f->prepare ({ sr, (juce::uint32) 8192, 1 });
+            hp.push_back (std::move (f));
+        }
+        highScratch.assign ((size_t) numChannels, 0.0f);
+        lowScratch .assign ((size_t) numChannels, 0.0f);
+        env = 0.0f; grGain = 1.0f; lastFreq = -1.0f;
+    }
+
+    void processDsp (juce::AudioBuffer<float>& buffer) override
+    {
+        const int ns  = buffer.getNumSamples();
+        const int nch = juce::jmin (buffer.getNumChannels(), (int) hp.size());
+        if (nch == 0) return;
+
+        const float freq = juce::jlimit (2000.0f, 16000.0f, param ("freq"));
+        if (std::abs (freq - lastFreq) > 0.5f)
+        {
+            lastFreq = freq;
+            auto co = juce::dsp::IIR::Coefficients<float>::makeHighPass (dspSampleRate, freq, 0.707f);
+            for (auto& f : hp) f->coefficients = co;
+        }
+
+        const float threshold = param ("threshold");
+        const float rangeDb   = juce::jmin (0.0f, param ("range"));
+        const float ratio     = 4.0f;   // fixed, strong band ratio
+        const float attCoeff  = std::exp (-1.0f / (float) (juce::jmax (0.1f, param ("attack"))  * 0.001 * dspSampleRate));
+        const float relCoeff  = std::exp (-1.0f / (float) (juce::jmax (1.0f, param ("release")) * 0.001 * dspSampleRate));
+
+        for (int i = 0; i < ns; ++i)
+        {
+            float peak = 0.0f;
+            for (int ch = 0; ch < nch; ++ch)
+            {
+                const float x = buffer.getReadPointer (ch)[i];
+                const float h = hp[(size_t) ch]->processSample (x);
+                highScratch[(size_t) ch] = h;
+                lowScratch [(size_t) ch] = x - h;
+                peak = juce::jmax (peak, std::abs (h));
+            }
+
+            const float coeff = (peak > env) ? attCoeff : relCoeff;
+            env = coeff * env + (1.0f - coeff) * peak;
+
+            const float levelDb = juce::Decibels::gainToDecibels (env, -100.0f);
+            const float over    = levelDb - threshold;
+            float grDb = over > 0.0f ? -(over * (1.0f - 1.0f / ratio)) : 0.0f;
+            grDb = juce::jmax (grDb, rangeDb);                    // clamp reduction
+            const float targetGain = std::pow (10.0f, grDb * 0.05f);
+
+            const float gc = (targetGain < grGain) ? attCoeff : relCoeff;
+            grGain = gc * grGain + (1.0f - gc) * targetGain;
+
+            for (int ch = 0; ch < nch; ++ch)
+                buffer.getWritePointer (ch)[i] = lowScratch[(size_t) ch]
+                                               + highScratch[(size_t) ch] * grGain;
+        }
+    }
+
+private:
+    std::vector<std::unique_ptr<juce::dsp::IIR::Filter<float>>> hp;
+    std::vector<float> highScratch, lowScratch;
+    float env = 0.0f, grGain = 1.0f, lastFreq = -1.0f;
 };
 
 } // namespace dcr::builtin
