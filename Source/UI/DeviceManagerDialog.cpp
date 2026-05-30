@@ -37,6 +37,17 @@ DeviceManagerDialog::DeviceManagerDialog (AudioEngine& e,
         row->inputBtn .setEnabled (row->hasInput);
         row->outputBtn.setEnabled (row->hasOutput);
 
+        // Self-loop blocking only makes sense on a duplex device (in + out).
+        // Default ON for detected virtual / loopback cards.
+        const bool duplex = row->hasInput && row->hasOutput;
+        row->noLoopBtn.setButtonText ("No loop");
+        row->noLoopBtn.setTooltip ("Block this device's input channel N from feeding its OWN output "
+                                   "channel N (prevents virtual-cable feedback).  Recommended ON for "
+                                   "BlackHole / Loopback / VB-Cable / Pro Tools Audio Bridge etc.");
+        row->noLoopBtn.setEnabled (duplex);
+        row->noLoopBtn.setToggleState (duplex && AudioEngine::isLikelyVirtualDevice (name),
+                                       juce::dontSendNotification);
+
         // Pre-tick based on current selection.
         for (auto& sp : current)
         {
@@ -44,12 +55,14 @@ DeviceManagerDialog::DeviceManagerDialog (AudioEngine& e,
             {
                 if (sp.wantInput  && row->hasInput)  row->inputBtn .setToggleState (true, juce::dontSendNotification);
                 if (sp.wantOutput && row->hasOutput) row->outputBtn.setToggleState (true, juce::dontSendNotification);
+                if (duplex) row->noLoopBtn.setToggleState (sp.blockSelfLoop, juce::dontSendNotification);
             }
         }
 
         rowsHolder.addAndMakeVisible (row->nameLabel);
         rowsHolder.addAndMakeVisible (row->inputBtn);
         rowsHolder.addAndMakeVisible (row->outputBtn);
+        rowsHolder.addAndMakeVisible (row->noLoopBtn);
         rows.add (row);
     }
 
@@ -61,7 +74,15 @@ DeviceManagerDialog::DeviceManagerDialog (AudioEngine& e,
             auto* r = rows[i];
             const bool wIn  = r->inputBtn .getToggleState() && r->hasInput;
             const bool wOut = r->outputBtn.getToggleState() && r->hasOutput;
-            if (wIn || wOut) sel.push_back ({ r->name, wIn, wOut });
+            if (wIn || wOut)
+            {
+                AudioEngine::DeviceSpec spec;
+                spec.name          = r->name;
+                spec.wantInput     = wIn;
+                spec.wantOutput    = wOut;
+                spec.blockSelfLoop = r->noLoopBtn.getToggleState() && r->hasInput && r->hasOutput;
+                sel.push_back (spec);
+            }
         }
         // Close the dialog first; defer the (possibly slow) callback so the
         // window can finish its dismissal animation immediately.
@@ -82,7 +103,7 @@ DeviceManagerDialog::DeviceManagerDialog (AudioEngine& e,
     addAndMakeVisible (okButton);
     addAndMakeVisible (cancelButton);
 
-    setSize (520, 460);
+    setSize (600, 460);
 }
 
 void DeviceManagerDialog::paint (juce::Graphics& g)
@@ -112,9 +133,10 @@ void DeviceManagerDialog::resized()
         auto* row = rows[i];
         const int y = i * rowH + 2;
         const int w = rowsHolder.getWidth();
-        row->nameLabel.setBounds (4, y, w - 130, rowH - 4);
-        row->inputBtn .setBounds (w - 122, y + 4, 56, rowH - 8);
-        row->outputBtn.setBounds (w - 60,  y + 4, 56, rowH - 8);
+        row->nameLabel.setBounds (4, y, w - 210, rowH - 4);
+        row->inputBtn .setBounds (w - 202, y + 4, 50, rowH - 8);
+        row->outputBtn.setBounds (w - 150, y + 4, 54, rowH - 8);
+        row->noLoopBtn.setBounds (w - 92,  y + 4, 88, rowH - 8);
     }
 }
 

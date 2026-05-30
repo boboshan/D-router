@@ -50,7 +50,18 @@ public:
         juce::String name;
         bool wantInput  = false;
         bool wantOutput = false;
+        // Virtual loopback devices (BlackHole, Loopback, VB-Cable, Pro Tools
+        // Audio Bridge, ...) feed their output straight back to their input.
+        // Routing this device's input ch N to its OWN output ch N then makes
+        // a runaway feedback loop.  When this is set, the engine blocks those
+        // same-device / same-channel crosspoints in the matrix.  Defaults to
+        // true for devices the dialog detects as virtual.
+        bool blockSelfLoop = false;
     };
+
+    // Heuristic: does this device name look like a virtual loopback device?
+    // Used to default blockSelfLoop on in the device dialog.
+    static bool isLikelyVirtualDevice (const juce::String& name);
 
     // (Re)start the engine with the given devices. Returns true if all opened.
     bool start (const std::vector<DeviceSpec>& devices);
@@ -69,6 +80,7 @@ public:
         int globalOutputBase = -1;
         int numOutputChannels = 0;
         double deviceSampleRate = 0.0;
+        bool blockSelfLoop = false;   // carried from the DeviceSpec
     };
     const std::vector<DeviceInfo>& getDeviceInfo() const noexcept { return deviceInfo; }
 

@@ -232,6 +232,21 @@ void CrosspointGrid::paint (juce::Graphics& g)
             // through the per-row/column span before hitting the matrix.
             const int engM = engOutForCol (m);
             const int engN = engInForRow  (n);
+
+            // Blocked (virtual-device self-loop): draw a dim red locked cell
+            // with a slash so the user sees it can't be routed.
+            if (matrix.isBlocked (engM, engN))
+            {
+                g.setColour (juce::Colour::fromRGB (40, 20, 22));
+                g.fillRect (r);
+                g.setColour (juce::Colour::fromRGB (150, 60, 60));
+                g.drawLine (r.getX() + 3.0f, r.getBottom() - 3.0f,
+                            r.getRight() - 3.0f, r.getY() + 3.0f, 1.2f);   // back-slash
+                g.setColour (juce::Colour::fromRGB (70, 35, 38));
+                g.drawRect (r, 0.5f);
+                continue;
+            }
+
             const float gain = matrix.getCrosspoint (engM, engN);
             const bool on = gain > 1.0e-6f;
 
@@ -394,6 +409,9 @@ void CrosspointGrid::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Blocked self-loop crosspoint -- not routable.
+    if (matrix.isBlocked (engOutForCol (m), engInForRow (n))) return;
+
     if (e.mods.isShiftDown())
     {
         if (shiftStartOut == -1)
@@ -474,6 +492,7 @@ void CrosspointGrid::mouseDoubleClick (const juce::MouseEvent& e)
     int m, n;
     if (! hitTestCell (e.x, e.y, m, n)) return;
     if (cellIsAggregate (m, n)) return;
+    if (matrix.isBlocked (engOutForCol (m), engInForRow (n))) return;
     matrix.setCrosspoint (engOutForCol (m), engInForRow (n), 1.0f);
     invalidateCell (m, n);
 }
