@@ -63,6 +63,23 @@ juce::String AudioEngine::getDefaultOutputDeviceName() const
     return juce::isPositiveAndBelow (idx, names.size()) ? names[idx] : juce::String{};
 }
 
+bool AudioEngine::isLikelyVirtualDevice (const juce::String& name)
+{
+    const auto n = name.toLowerCase();
+    // Common macOS virtual / loopback audio devices.  The device dialog uses
+    // this only to DEFAULT the "no self-loop" checkbox -- the user can always
+    // override it, so a missed/extra match is recoverable.
+    static const char* patterns[] = {
+        "blackhole", "loopback", "soundflower", "vb-cable", "vb-audio",
+        "cable", "audio bridge", "dante", "soundsiphon", "sound siphon",
+        "ishowu", "wavtap", "existential", "ground control", "audio hijack",
+        "rogue amoeba", "multi-output", "aggregate", "virtual"
+    };
+    for (auto* p : patterns)
+        if (n.contains (p)) return true;
+    return false;
+}
+
 bool AudioEngine::start (const std::vector<DeviceSpec>& devices)
 {
     stop();
@@ -111,6 +128,7 @@ bool AudioEngine::start (const std::vector<DeviceSpec>& devices)
         info.deviceSampleRate = w->getDeviceSampleRate();
         info.numInputChannels  = nIn;
         info.numOutputChannels = nOut;
+        info.blockSelfLoop     = spec.blockSelfLoop;
         if (info.numInputChannels > 0)  { info.globalInputBase  = totalIns;  totalIns  += info.numInputChannels;  }
         if (info.numOutputChannels > 0) { info.globalOutputBase = totalOuts; totalOuts += info.numOutputChannels; }
         deviceInfo.push_back (info);
@@ -128,6 +146,21 @@ bool AudioEngine::start (const std::vector<DeviceSpec>& devices)
                               + " in x " + juce::String (totalOuts) + " out, processor starting");
 
     matrix.resize (totalIns, totalOuts);
+
+    // Block self-loop crosspoints for virtual/loopback devices: this device's
+    // input ch N must not feed its OWN output ch N (instant feedback).  resize()
+    // cleared all blocks, so re-apply here from the device topology.
+    for (const auto& d : deviceInfo)
+    {
+        if (! d.blockSelfLoop) continue;
+        if (d.globalInputBase < 0 || d.globalOutputBase < 0) continue;
+        const int n = juce::jmin (d.numInputChannels, d.numOutputChannels);
+        for (int c = 0; c < n; ++c)
+            matrix.setBlocked (d.globalOutputBase + c, d.globalInputBase + c, true);
+        if (n > 0)
+            juce::Logger::writeToLog ("engine.start: blocked " + juce::String (n)
+                + " self-loop crosspoint(s) on virtual device '" + d.name + "'");
+    }
 
     // Create per-output and per-input plugin hosts.
     pluginHosts.clear();

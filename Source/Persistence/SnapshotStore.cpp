@@ -21,6 +21,7 @@ namespace ids {
     static const juce::Identifier name           ("name");
     static const juce::Identifier wantInput      ("wantInput");
     static const juce::Identifier wantOutput     ("wantOutput");
+    static const juce::Identifier blockSelfLoop  ("blockSelfLoop");
     static const juce::Identifier ch             ("ch");
     static const juce::Identifier outChId        ("out");
     static const juce::Identifier inChId         ("in");
@@ -89,6 +90,7 @@ juce::ValueTree SnapshotStore::toValueTree (const Snapshot& s)
         dv.setProperty (ids::name,       d.name,         nullptr);
         dv.setProperty (ids::wantInput,  d.wantInput,    nullptr);
         dv.setProperty (ids::wantOutput, d.wantOutput,   nullptr);
+        dv.setProperty (ids::blockSelfLoop, d.blockSelfLoop, nullptr);
         devs.addChild (dv, -1, nullptr);
     }
     root.addChild (devs, -1, nullptr);
@@ -241,6 +243,7 @@ Snapshot SnapshotStore::fromValueTree (const juce::ValueTree& root)
         d.name       = child.getProperty (ids::name).toString();
         d.wantInput  = (bool) child.getProperty (ids::wantInput);
         d.wantOutput = (bool) child.getProperty (ids::wantOutput);
+        d.blockSelfLoop = (bool) child.getProperty (ids::blockSelfLoop, false);
         if (d.name.isNotEmpty() && (d.wantInput || d.wantOutput))
             s.devices.push_back (d);
     }

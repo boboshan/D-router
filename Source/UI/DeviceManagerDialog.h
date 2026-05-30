@@ -35,6 +35,10 @@ private:
         bool hasOutput = false;
         juce::ToggleButton inputBtn;
         juce::ToggleButton outputBtn;
+        // "No self-loop": block this device's input ch N -> its own output
+        // ch N (feedback).  Only meaningful for duplex devices; defaults on
+        // for detected virtual/loopback devices.
+        juce::ToggleButton noLoopBtn;
         juce::Label nameLabel;
     };
 

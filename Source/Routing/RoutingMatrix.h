@@ -25,6 +25,13 @@ public:
     float getOutputTrim (int output) const noexcept;
     float getCrosspoint (int output, int input) const noexcept;
 
+    // Blocked crosspoints: setCrosspoint() forces these to 0 and the UI
+    // greys them out.  Used to stop a virtual loopback device routing its
+    // own input back to its own output on the same channel (feedback).
+    // Applied by the engine after resize(); resize() clears all blocks.
+    void setBlocked (int output, int input, bool blocked) noexcept;
+    bool isBlocked  (int output, int input) const noexcept;
+
     void setInputMute  (int input,  bool on) noexcept;
     void setOutputMute (int output, bool on) noexcept;
     void setInputSolo  (int input,  bool on) noexcept;
@@ -68,6 +75,7 @@ private:
     std::vector<std::atomic<float>> inputTrim;
     std::vector<std::atomic<float>> outputTrim;
     std::vector<std::atomic<float>> crosspoint;   // row-major numOuts * numIns
+    std::vector<std::atomic<unsigned char>> blocked; // row-major numOuts * numIns
     std::vector<std::atomic<unsigned char>> inputMute;
     std::vector<std::atomic<unsigned char>> outputMute;
     std::vector<std::atomic<unsigned char>> inputSolo;
