@@ -87,6 +87,7 @@ public:
     // Diagnostics
     uint64_t getMatrixBlocksProcessed() const noexcept { return processor.getBlocksProcessed(); }
     uint64_t getMatrixBlocksStalled()   const noexcept { return processor.getBlocksStalled();   }
+    uint64_t getMatrixOutputDrops()     const noexcept { return processor.getOutputDrops();     }
     size_t   getInputRingFill  (int globalCh) const;  // returns sample count available
     size_t   getOutputRingFill (int globalCh) const;
     // Output ring fill as a fraction 0..1 of the ring's usable capacity.

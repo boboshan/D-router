@@ -190,14 +190,17 @@ void PerfMonitor::emitSnapshot()
     const auto stalled  = engine.getMatrixBlocksStalled();
     const auto xrunIn   = engine.getTotalInputOverruns();
     const auto xrunOut  = engine.getTotalOutputUnderruns();
+    const auto drops    = engine.getMatrixOutputDrops();
     const auto dB  = blocks   > lastBlocks   ? blocks   - lastBlocks   : 0;
     const auto dS  = stalled  > lastStalled  ? stalled  - lastStalled  : 0;
     const auto dXi = xrunIn   > lastXrunIn   ? xrunIn   - lastXrunIn   : 0;
     const auto dXo = xrunOut  > lastXrunOut  ? xrunOut  - lastXrunOut  : 0;
+    const auto dDr = drops    > lastDrops    ? drops    - lastDrops    : 0;
     lastBlocks  = blocks;
     lastStalled = stalled;
     lastXrunIn  = xrunIn;
     lastXrunOut = xrunOut;
+    lastDrops   = drops;
 
     const float cpuAvg  = engine.getCpuLoadAvg()  * 100.0f;
     const float cpuPeak = engine.getCpuLoadPeak() * 100.0f;
@@ -236,7 +239,8 @@ void PerfMonitor::emitSnapshot()
          << " polls/block=" << juce::String (pollsPerBlock, 1)
          << " outRing=" << juce::String (outRingMinMs, 1) << "ms"
          << "(" << juce::String (outRingMin, 0) << "%)"
-         << " xrun=" << juce::String ((juce::int64) dXi) << "/" << juce::String ((juce::int64) dXo);
+         << " xrun=" << juce::String ((juce::int64) dXi) << "/" << juce::String ((juce::int64) dXo)
+         << " drop=" << juce::String ((juce::int64) dDr);
     if (rssMb >= 0) line << " rss=" << juce::String (rssMb) << "MB";
     line << topSeg;
     juce::Logger::writeToLog (line);

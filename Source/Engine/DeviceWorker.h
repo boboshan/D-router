@@ -77,6 +77,12 @@ public:
     int getInputSrcLatencyEngineSamples()  const;
     int getOutputSrcLatencyDeviceSamples() const;
 
+    // Event the input callback signals after writing a fresh block, so the
+    // matrix thread can wake immediately (set by AudioEngine before start).
+    // Raw non-owning pointer; lifetime outlives every DeviceWorker (it lives
+    // in the MatrixProcessor, which the engine destroys after the workers).
+    void setInputReadyEvent (juce::WaitableEvent* e) noexcept { inputReadyEvent.store (e, std::memory_order_release); }
+
 private:
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                            int numInputChannelsInCallback,
@@ -116,6 +122,10 @@ private:
     std::atomic<uint64_t> inputOverruns   { 0 };
     std::atomic<uint64_t> outputUnderruns { 0 };
     std::atomic<double>   lastUnderrunMs  { 0.0 };
+
+    // Signalled (if set) at the end of the input half of the callback to wake
+    // the matrix thread.  Non-owning; nullptr until AudioEngine wires it.
+    std::atomic<juce::WaitableEvent*> inputReadyEvent { nullptr };
 
     // The device sample rate / buffer size we actually configured our SRCs
     // and rings for, captured at open().  audioDeviceAboutToStart compares
