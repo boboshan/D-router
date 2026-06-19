@@ -1087,17 +1087,21 @@ void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> n
     auto specs = std::move (newSpecs);
     reconfigThread = std::thread ([this, specs, preserved, preserveChains]
     {
-        // Graceful fade-out before tearing the engine down.  Setting all
-        // output trims to 0 makes the smoothing in MatrixProcessor ramp
-        // every active route to silence; we then sleep long enough (~5*tau)
-        // for the ramp to complete before stopping devices.  This MUST run
-        // before stopProcessor() below -- once the matrix thread is halted no
+        // Graceful fade-out before tearing the engine down.  Ramp the MASTER
+        // output gain to silence (the matrix smooths it over ~5*tau), then
+        // sleep for the ramp to complete before stopping devices.  This MUST
+        // run before stopProcessor() -- once the matrix thread is halted no
         // processBlock fires and the ramp can't advance (-> click).
+        //
+        // CRITICAL: we fade the master gain, NOT the per-channel output trims.
+        // Zeroing the trims here used to leak a permanent -60 dB ("silent")
+        // state -- if the restart aborted, or a snapshot save raced the fade
+        // window, the user's output trims stayed at 0 and every fresh route was
+        // inaudible.  The master gain dies with this engine and the next one
+        // starts at unity, so trims are never touched.
         {
             const int smoothMs = juce::jmax (5, engine.getSettings().gainSmoothingMs);
-            auto& mtx = engine.getRoutingMatrix();
-            const int nOut = mtx.getNumOutputs();
-            for (int o = 0; o < nOut; ++o) mtx.setOutputTrim (o, 0.0f);
+            engine.setOutputMasterGain (0.0f);
             std::this_thread::sleep_for (std::chrono::milliseconds (smoothMs * 5));
         }
 

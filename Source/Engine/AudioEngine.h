@@ -88,6 +88,10 @@ public:
     uint64_t getMatrixBlocksProcessed() const noexcept { return processor.getBlocksProcessed(); }
     uint64_t getMatrixBlocksStalled()   const noexcept { return processor.getBlocksStalled();   }
     uint64_t getMatrixOutputDrops()     const noexcept { return processor.getOutputDrops();     }
+
+    // Master output fade for click-free restarts -- ramps the whole output bus
+    // without touching per-channel trims.  1.0 = unity.
+    void setOutputMasterGain (float g) noexcept { processor.setMasterGainTarget (g); }
     size_t   getInputRingFill  (int globalCh) const;  // returns sample count available
     size_t   getOutputRingFill (int globalCh) const;
     // Output ring fill as a fraction 0..1 of the ring's usable capacity.

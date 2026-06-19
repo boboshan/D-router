@@ -63,6 +63,16 @@ public:
     float getInputPeak  (int globalIn)  const noexcept;
     float getOutputPeak (int globalOut) const noexcept;
 
+    // Master output fade, applied on top of every output AFTER the mix.  Used
+    // by the engine-restart path to ramp the whole output to silence (click-
+    // free) WITHOUT touching the user's per-channel output trims -- clobbering
+    // those was leaking a permanent -60 dB ("silent") state when a restart
+    // aborted or a snapshot save raced the fade.  1.0 = unity (normal).
+    void setMasterGainTarget (float g) noexcept
+    {
+        masterGainTarget.store (g, std::memory_order_relaxed);
+    }
+
 private:
     void threadLoop();
     bool tryProcessOneBlock();
@@ -114,6 +124,12 @@ private:
     std::vector<float>       inputEffGain;   // per-input mute/solo-aware trim
     uint64_t lastSnapGen = 0;
     float    smoothCoeff = 1.0f;             // 1.0 = no smoothing (instant)
+
+    // Master output fade (engine-restart click suppression).  Target is set
+    // from the message thread; current is ramped on the matrix thread with the
+    // same one-pole coeff as the route gains.  Never touches per-channel trims.
+    std::atomic<float> masterGainTarget  { 1.0f };
+    float              masterGainCurrent = 1.0f;
 
     void refreshSnapshotIfDirty();
 };
