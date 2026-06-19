@@ -16,8 +16,56 @@
 
 #include <pthread.h>
 #include <sys/qos.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
 
 namespace dcr {
+
+namespace
+{
+    // Promote the calling thread to a real-time (time-constraint) scheduling
+    // class so macOS won't preempt it for tens of milliseconds during UI
+    // repaints / Spotlight / other apps -- the exact stall that drained the
+    // output ring and produced the audible stutter + tear.  Parameters are
+    // expressed against the engine block period: we ask for up to `comp` of
+    // CPU within every `period`, with a hard `constraint` deadline.
+    // preemptible=true keeps us BELOW the CoreAudio HAL I/O threads (which set
+    // tighter constraints), so device callbacks still win -- we only out-rank
+    // ordinary timeshare work.
+    void setRealtimeSchedule (double blockPeriodSec)
+    {
+        mach_timebase_info_data_t tb{};
+        if (mach_timebase_info (&tb) != KERN_SUCCESS || tb.numer == 0) return;
+
+        // ns -> mach absolute-time ticks.
+        auto nsToAbs = [&] (double ns) -> uint32_t
+        {
+            const double abs = ns * (double) tb.denom / (double) tb.numer;
+            return (uint32_t) juce::jlimit (1.0, 4.0e9, abs);
+        };
+
+        const double periodNs = juce::jmax (1.0e6, blockPeriodSec * 1.0e9); // >= 1 ms
+
+        thread_time_constraint_policy_data_t pol{};
+        pol.period      = nsToAbs (periodNs);
+        pol.computation = nsToAbs (periodNs * 0.5);   // expected CPU per period
+        pol.constraint  = nsToAbs (periodNs * 0.9);   // hard deadline within the period
+        pol.preemptible = 1;
+
+        const kern_return_t kr = thread_policy_set (
+            pthread_mach_thread_np (pthread_self()),
+            THREAD_TIME_CONSTRAINT_POLICY,
+            (thread_policy_t) &pol,
+            THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+
+        juce::Logger::writeToLog (kr == KERN_SUCCESS
+            ? juce::String ("dcr.Matrix: real-time scheduling engaged (period ")
+                  + juce::String (periodNs / 1.0e6, 2) + " ms)"
+            : juce::String ("dcr.Matrix: real-time scheduling REQUEST FAILED (kr=")
+                  + juce::String ((int) kr) + ") -- staying on USER_INTERACTIVE QoS");
+    }
+}
 
 MatrixProcessor::MatrixProcessor()
 {
@@ -112,6 +160,7 @@ void MatrixProcessor::start()
 void MatrixProcessor::stop()
 {
     if (! running.exchange (false)) return;
+    inputReady.signal();   // wake the thread out of its wait so it exits now
     if (thread.joinable()) thread.join();
 }
 
@@ -343,7 +392,11 @@ bool MatrixProcessor::tryProcessOneBlock()
 
         auto* ring = outputs[i].device->getOutputRing (outputs[i].channelIndex);
         if (ring != nullptr)
-            ring->write (src, (size_t) blockSize);
+        {
+            const size_t wrote = ring->write (src, (size_t) blockSize);
+            if (wrote < (size_t) blockSize)
+                outputDrops.fetch_add (1, std::memory_order_relaxed);
+        }
     }
     const auto t1 = std::chrono::steady_clock::now();
     const double elapsedSec     = std::chrono::duration<double> (t1 - t0).count();
@@ -365,13 +418,21 @@ void MatrixProcessor::threadLoop()
 {
     juce::Thread::setCurrentThreadName ("dcr.Matrix");
 
-    // Audio-rate worker -- bump scheduling QoS to the highest non-RT class
-    // so the kernel doesn't time-slice us against random UI / Spotlight /
-    // background work.  USER_INTERACTIVE is Apple's recommended class for
-    // audio worker threads that aren't the I/O callback itself.  Without
-    // this, OpenGL paint storms or another busy app can preempt us for
-    // long enough to underrun the output ring -> audible pops.
+    // First raise QoS (so even if the RT request below fails we're still on
+    // the highest timeshare class), THEN engage real-time time-constraint
+    // scheduling so the kernel won't preempt us mid-block for UI / Spotlight /
+    // other apps -- the stall that drained the output ring and produced the
+    // audible stutter + tear.
     pthread_set_qos_class_self_np (QOS_CLASS_USER_INTERACTIVE, 0);
+    const double blockPeriodSec = (double) blockSize / juce::jmax (1.0, sampleRate);
+    setRealtimeSchedule (blockPeriodSec);
+
+    // Event-driven: block on inputReady (signalled by each input device
+    // callback after it writes a fresh block) instead of sleep-polling.  The
+    // wait has a timeout fallback so a missed/coalesced signal still makes
+    // progress, and so we re-check `running` to exit promptly.  The timeout is
+    // ~half a block period: short enough to self-heal, long enough not to spin.
+    const int timeoutMs = juce::jlimit (1, 50, (int) std::lround (blockPeriodSec * 500.0));
 
     while (running.load (std::memory_order_relaxed))
     {
@@ -381,8 +442,12 @@ void MatrixProcessor::threadLoop()
             if (! tryProcessOneBlock()) break;
             progressed = true;
         }
+        // If we processed everything available, sleep on the event until the
+        // next input block arrives (or the timeout fallback fires).  If we hit
+        // the drain cap with work still pending, loop straight back without
+        // waiting so we don't fall behind.
         if (! progressed)
-            std::this_thread::sleep_for (std::chrono::microseconds (threadSleepMicros));
+            inputReady.wait (timeoutMs);
     }
 }
 

@@ -267,6 +267,14 @@ void DeviceWorker::audioDeviceIOCallbackWithContext (const float* const* inputCh
         }
     }
 
+    // Fresh input is now in the rings -- wake the matrix thread so it can
+    // process this block immediately instead of waiting for its next poll
+    // tick.  signal() on an already-signalled auto-reset event is a cheap
+    // no-op, so duplicate signals (multiple input devices) just coalesce.
+    if (numInputChannels > 0)
+        if (auto* ev = inputReadyEvent.load (std::memory_order_acquire))
+            ev->signal();
+
     // --- OUTPUT: outputRings -> SRC -> device-rate samples ---
     const int nOut = std::min (numOutputChannelsInCallback, numOutputChannels);
     for (int ch = 0; ch < nOut; ++ch)

@@ -222,6 +222,14 @@ bool AudioEngine::start (const std::vector<DeviceSpec>& devices)
     }
     processor.configure (std::move (globalIns), std::move (globalOuts),
                          &matrix, &groupManager, &inputGroupManager, settings);
+
+    // Wire each device's input callback to wake the matrix thread directly
+    // (event-driven) instead of leaving it to sleep-poll.  The event lives in
+    // `processor`, which outlives every worker (workers are cleared first in
+    // stop()), so the raw pointer is always valid while a callback can fire.
+    for (auto& w : workers)
+        w->setInputReadyEvent (&processor.getInputReadyEvent());
+
     processor.start();
     runningFlag = true;
     return true;

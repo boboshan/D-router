@@ -43,6 +43,16 @@ public:
     // Diagnostics (UI-thread safe to read).
     uint64_t getBlocksProcessed() const noexcept { return blocksProcessed.load (std::memory_order_relaxed); }
     uint64_t getBlocksStalled()   const noexcept { return blocksStalled  .load (std::memory_order_relaxed); }
+    // Output-ring-full drops: the matrix produced a block but the output ring
+    // had no room (consumer fell behind -- typically the tail of a catch-up
+    // burst after the thread was preempted).  Silently lost samples until now.
+    uint64_t getOutputDrops()     const noexcept { return outputDrops    .load (std::memory_order_relaxed); }
+
+    // Event-driven wakeup: each input device callback signals this after it
+    // writes a fresh block into its input rings, so the matrix thread can run
+    // immediately instead of sleep-polling (which added up to threadSleepMicros
+    // of latency jitter and meant a preemption was only noticed a poll later).
+    juce::WaitableEvent& getInputReadyEvent() noexcept { return inputReady; }
 
     // CPU load: 0..1 ratio of (block processing time) / (block period).
     float getCpuLoadAvg()  const noexcept { return cpuLoadAvg .load (std::memory_order_relaxed); }
@@ -79,9 +89,11 @@ private:
     std::unique_ptr<WorkerPool> pool;
 
     std::thread thread;
+    juce::WaitableEvent inputReady { false };  // auto-reset: each wait() consumes one signal
     std::atomic<bool> running { false };
     std::atomic<uint64_t> blocksProcessed { 0 };
     std::atomic<uint64_t> blocksStalled   { 0 };
+    std::atomic<uint64_t> outputDrops     { 0 };
     std::atomic<float>    cpuLoadAvg     { 0.0f };
     std::atomic<float>    cpuLoadPeak    { 0.0f };
     double                sampleRate     = 48000.0;

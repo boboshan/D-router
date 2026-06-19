@@ -53,6 +53,7 @@ private:
     uint64_t lastStalled        = 0;
     uint64_t lastXrunIn         = 0;
     uint64_t lastXrunOut        = 0;
+    uint64_t lastDrops          = 0;
     juce::int64 lastTickMs      = 0;
 
     // Per-device flag: have we already logged the "first callback fired"
