@@ -136,6 +136,11 @@ void MatrixProcessor::configure (std::vector<GlobalInput>  ins,
     activeRoutes.reserve (inputs.size() * outputs.size());
     lastSnapGen = 0;   // force refresh on first block
 
+    // Fresh engine -> master fade starts at unity (the OLD engine's fade-to-0
+    // died with its processor; this one plays at full volume immediately).
+    masterGainTarget.store (1.0f, std::memory_order_relaxed);
+    masterGainCurrent = 1.0f;
+
     // First-build routes have currentGain = 0 so they fade IN smoothly when
     // the engine starts.  No special action needed beyond the clear above.
 }
@@ -381,10 +386,21 @@ bool MatrixProcessor::tryProcessOneBlock()
         });
     }
 
+    // Master output fade (engine-restart click suppression).  Ramp toward the
+    // target once per block; when it's effectively unity the multiply is
+    // skipped so steady-state costs nothing.  Applied to the post-mix bus so
+    // the meters reflect the faded output too.
+    masterGainCurrent += (masterGainTarget.load (std::memory_order_relaxed) - masterGainCurrent) * smoothCoeff;
+    const float masterG = masterGainCurrent;
+    const bool  applyMaster = masterG < 0.99999f;
+
     // Peak (SIMD), then write rings.
     for (size_t i = 0; i < outputs.size(); ++i)
     {
         float* src = outBuf.data() + i * (size_t) blockSize;
+
+        if (applyMaster)
+            juce::FloatVectorOperations::multiply (src, masterG, blockSize);
 
         const auto r = juce::FloatVectorOperations::findMinAndMax (src, blockSize);
         const float peak = juce::jmax (std::abs (r.getStart()), std::abs (r.getEnd()));
