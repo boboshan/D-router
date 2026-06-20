@@ -929,8 +929,11 @@ protected:
             const float measuredDb = 10.0f * std::log10 (juce::jmax (1.0e-12f, meanSq));
 
             // Feed-forward target gain, bounded by +/- range.  Below the gate
-            // (silence / noise floor) hold the gain so we don't ride noise up.
-            float desiredGainDb = currentGainDb;
+            // (silence / pause / noise floor) RELAX toward 0 dB instead of
+            // holding the last gain -- so a pause doesn't leave a boost frozen
+            // in, and when signal returns the rider starts riding up from
+            // unity ("from 0") rather than slamming in a stale boost.
+            float desiredGainDb = 0.0f;
             if (measuredDb > gateDb)
                 desiredGainDb = juce::jlimit (-rangeDb, rangeDb, targetDb - measuredDb);
 
