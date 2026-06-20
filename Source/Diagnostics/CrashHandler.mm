@@ -157,6 +157,9 @@ void CrashHandler::install()
 
     // Pre-open the log fd on the message thread so the signal handler never has
     // to.  Logger::init() runs before install() (see header), so the file exists.
+    // INVARIANT: install() is called exactly once, after the final Logger::init()
+    // (Main.cpp) -- gLogFd is opened once and never reset; a second install()
+    // would leak this fd, and a re-init without re-install would leave it stale.
     {
         const auto path = Logger::getCurrentLogFile().getFullPathName();
         if (path.isNotEmpty())
