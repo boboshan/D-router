@@ -48,12 +48,13 @@ struct AtomicXmlWriteTests : juce::UnitTest
             juce::XmlElement xml ("root");
             expect (dcr::writeXmlAtomically (xml, target));
 
-            // JUCE TemporaryFile names its sibling "<base>_temp<hex><ext>", so
-            // scan for that stem (not "*.temp", which never matches and would
-            // make this assertion vacuous). A successful atomic write renames the
-            // temp onto the target, leaving none behind.
-            auto leftovers = target.getParentDirectory()
-                                 .findChildFiles (juce::File::findFiles, false, "*_temp*");
+            // JUCE TemporaryFile names its sibling "<stem>_temp<hex><ext>", so
+            // scan for OUR target's stem specifically (not "*.temp", which never
+            // matches and would make this vacuous; and not a bare "*_temp*",
+            // which would catch unrelated files in the shared temp dir and flake).
+            // A successful atomic write renames the temp onto the target, none left.
+            auto leftovers = target.getParentDirectory().findChildFiles (
+                juce::File::findFiles, false, target.getFileNameWithoutExtension() + "_temp*");
             expectEquals (leftovers.size(), 0);
         }
     }

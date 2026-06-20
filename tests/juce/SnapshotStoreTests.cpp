@@ -137,10 +137,11 @@ struct SnapshotStoreTests : juce::UnitTest
             expect (SnapshotStore::load (file, r) == SnapshotStore::LoadResult::Ok);
             expectEquals (r.engineBlockSize, 512);
 
-            // See AtomicXmlWriteTests: scan JUCE's real "<base>_temp<hex>" stem,
-            // not "*.temp" (which would never match and pass vacuously).
-            auto leftovers = file.getParentDirectory()
-                                 .findChildFiles (juce::File::findFiles, false, "*_temp*");
+            // See AtomicXmlWriteTests: scan OUR file's "<stem>_temp<hex>" sibling
+            // specifically, not "*.temp" (vacuous) or a bare "*_temp*" (would
+            // catch unrelated files in the shared temp dir and flake).
+            auto leftovers = file.getParentDirectory().findChildFiles (
+                juce::File::findFiles, false, file.getFileNameWithoutExtension() + "_temp*");
             expectEquals (leftovers.size(), 0);
         }
     }
