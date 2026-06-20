@@ -11,6 +11,7 @@
 #include "Engine/PdcPlan.h"
 #include "Engine/RingBuffer.h"
 #include "Routing/GroupGain.h"
+#include "Routing/PanicController.h"
 #include "Routing/RoutingMatrix.h"
 #include "DSP/Builtin/ResonanceMath.h"
 #include "DSP/Builtin/SpectralNodeMath.h"
@@ -268,6 +269,102 @@ namespace
         CHECK (s.outputMute[0] != 0);
         CHECK (s.inputSolo[0] != 0);
         CHECK (s.anySoloActive);
+    }
+
+    // ---------------------------------------------------------------------------
+    // PanicController (Phase C1) -- mirrors the pre-extraction MainComponent logic
+    // ---------------------------------------------------------------------------
+    void test_panic_engage_saves_and_mutes_all()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (3, 2);
+        m.setInputMute (1, true); // one input already muted before panic
+
+        dcr::PanicController p;
+        CHECK (!p.isActive());
+        CHECK (p.engage (m) == true);
+        CHECK (p.isActive());
+        CHECK (p.state() == dcr::PanicController::State::Active);
+        for (int n = 0; n < 3; ++n)
+            CHECK (m.getInputMute (n));
+        for (int o = 0; o < 2; ++o)
+            CHECK (m.getOutputMute (o));
+    }
+
+    void test_panic_engage_empty_matrix_is_noop()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (0, 0);
+        dcr::PanicController p;
+        CHECK (p.engage (m) == false);
+        CHECK (!p.isActive());
+    }
+
+    void test_panic_release_restores_prior_state()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (3, 2);
+        m.setInputMute (1, true);
+        m.setOutputMute (0, true);
+
+        dcr::PanicController p;
+        p.engage (m);
+        p.release (m);
+        CHECK (!p.isActive());
+        CHECK (!m.getInputMute (0));
+        CHECK (m.getInputMute (1));
+        CHECK (!m.getInputMute (2));
+        CHECK (m.getOutputMute (0));
+        CHECK (!m.getOutputMute (1));
+    }
+
+    void test_panic_release_when_inactive_is_noop()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (2, 2);
+        m.setInputMute (0, true);
+        dcr::PanicController p;
+        p.release (m);
+        CHECK (!p.isActive());
+        CHECK (m.getInputMute (0));
+        CHECK (!m.getInputMute (1));
+    }
+
+    void test_panic_forget_drops_saved_state_without_touching_matrix()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (2, 1);
+        dcr::PanicController p;
+        p.engage (m); // everything muted, prior (all-unmuted) state saved
+        m.setInputMute (0, false); // user manually unmutes while panic active
+        p.noteUserMuteChanged();
+        CHECK (!p.isActive());
+        CHECK (!m.getInputMute (0));
+        CHECK (m.getInputMute (1));
+        // re-engage now saves the CURRENT pattern; release returns to it,
+        // proving the stale saved state was truly dropped.
+        p.engage (m);
+        p.release (m);
+        CHECK (!m.getInputMute (0));
+        CHECK (m.getInputMute (1));
+    }
+
+    void test_panic_forget_when_inactive_is_noop()
+    {
+        dcr::PanicController p;
+        p.noteUserMuteChanged();
+        CHECK (!p.isActive());
+    }
+
+    void test_panic_reset_clears_state_and_reports()
+    {
+        dcr::RoutingMatrix m;
+        m.resize (2, 2);
+        dcr::PanicController p;
+        p.engage (m);
+        CHECK (p.reset() == true);
+        CHECK (!p.isActive());
+        CHECK (p.reset() == false);
     }
 
     // ---------------------------------------------------------------------------
@@ -677,6 +774,14 @@ int main()
     test_matrix_dirty_generation();
     test_matrix_resize_clears_blocks();
     test_matrix_snapshot();
+
+    test_panic_engage_saves_and_mutes_all();
+    test_panic_engage_empty_matrix_is_noop();
+    test_panic_release_restores_prior_state();
+    test_panic_release_when_inactive_is_noop();
+    test_panic_forget_drops_saved_state_without_touching_matrix();
+    test_panic_forget_when_inactive_is_noop();
+    test_panic_reset_clears_state_and_reports();
 
     test_groupgain_db_roundtrip();
     test_groupgain_clamp();

@@ -37,6 +37,7 @@ target_sources(dcorerouter PRIVATE
     Source/Engine/WorkerPool.cpp
     Source/Engine/AudioEngine.cpp
     Source/Routing/RoutingMatrix.cpp
+    Source/Routing/PanicController.cpp
     Source/Routing/OutputGroupManager.cpp
     Source/Routing/InputGroupManager.cpp
     Source/UI/Crosspoint.cpp
@@ -110,6 +111,7 @@ enable_testing()
 add_executable(dcorerouter_tests
     tests/CoreLogicTests.cpp
     Source/Routing/RoutingMatrix.cpp
+    Source/Routing/PanicController.cpp
 )
 target_include_directories(dcorerouter_tests PRIVATE Source)
 target_compile_features(dcorerouter_tests PRIVATE cxx_std_20)
