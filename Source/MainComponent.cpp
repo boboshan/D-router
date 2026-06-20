@@ -288,7 +288,10 @@ namespace dcr
         {
             // Defer the ask to the next event loop tick so the main window is
             // already on screen when the dialog appears.
-            juce::MessageManager::callAsync ([this] {
+            auto alive = aliveToken;
+            juce::MessageManager::callAsync ([this, alive] {
+                if (!alive->load (std::memory_order_acquire))
+                    return;
                 juce::NativeMessageBox::showAsync (
                     juce::MessageBoxOptions()
                         .withIconType (juce::MessageBoxIconType::WarningIcon)
@@ -299,7 +302,9 @@ namespace dcr
                                       "groups and settings, or start with a blank project?")
                         .withButton ("Restore previous")
                         .withButton ("Start blank"),
-                    [this] (int result) {
+                    [this, alive] (int result) {
+                        if (!alive->load (std::memory_order_acquire))
+                            return;
                         bool restored = false;
                         if (result == 1) // first button => Restore
                         {
@@ -1225,8 +1230,11 @@ namespace dcr
             engine.stop();
             const bool started = specs.empty() ? true : engine.start (specs);
 
+            auto alive = aliveToken;
             juce::MessageManager::callAsync (
-                [this, specs, preserved, started, preserveChains, chainsToRestore = std::move (harvestedChains)]() mutable {
+                [this, alive, specs, preserved, started, preserveChains, chainsToRestore = std::move (harvestedChains)]() mutable {
+                    if (!alive->load (std::memory_order_acquire))
+                        return;
                     currentSpecs = specs;
                     if (!specs.empty() && !started)
                     {
