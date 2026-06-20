@@ -1477,6 +1477,15 @@ MatrixView::FxChainPopupContent::FxChainPopupContent (MatrixView& o, bool inp, i
         row.name.onClick = [this, s] { onSlotNameClicked (s); };
         row.name.onSwap  = [this] (int from, int to)
         {
+            // Close any open editors for the two slots being swapped FIRST --
+            // swapSlots moves the plugin instances between slots, and an editor
+            // left open would reference a plugin that now lives in the other
+            // slot, crashing on teardown / reopen.
+            for (int targetCh : targets)
+            {
+                owner.closeEditorFor (isInput, targetCh, from);
+                owner.closeEditorFor (isInput, targetCh, to);
+            }
             // Broadcast the swap to every target channel so an N-way drag
             // reorder keeps the chains in lock-step.
             for (int targetCh : targets)

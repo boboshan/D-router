@@ -37,6 +37,9 @@ namespace
     }
 }
 
+static bool tryConfigureLayout (juce::AudioPluginInstance& p,
+                                const juce::AudioChannelSet& desiredLayout);
+
 void MultiChannelPluginHost::prepare (double sr, int bs, int nCh)
 {
     sampleRate  = sr;
@@ -47,8 +50,18 @@ void MultiChannelPluginHost::prepare (double sr, int bs, int nCh)
     juce::AudioPluginInstance* p = current.get();
     if (p != nullptr)
     {
-        const bool ok = runGuarded ("prepare", p,
-            ^{ p->releaseResources(); p->prepareToPlay (sr, bs); });
+        // Re-apply the saved bus layout BEFORE prepareToPlay -- releaseResources
+        // can reset an AU's negotiated layout, and re-preparing without
+        // re-configuring leaves a multichannel AU on a default (mono/stereo)
+        // layout that doesn't match the group, so it falls back to bypass /
+        // silence after every engine restart (Settings apply).  Built-in
+        // processors don't care about bus layout, which is why only AUs broke.
+        const auto layoutCopy = lastLayout;
+        const bool ok = runGuarded ("prepare", p, ^{
+            p->releaseResources();
+            tryConfigureLayout (*p, layoutCopy);
+            p->prepareToPlay (sr, bs);
+        });
         broken.store (! ok, std::memory_order_relaxed);
     }
 }
@@ -88,6 +101,8 @@ void MultiChannelPluginHost::setPlugin (std::unique_ptr<juce::AudioPluginInstanc
                                         const juce::AudioChannelSet& desiredLayout,
                                         const juce::MemoryBlock* stateToRestore)
 {
+    lastLayout = desiredLayout;   // remember for re-prepare on engine restart
+
     bool prepareOk = true;
     if (p != nullptr)
     {

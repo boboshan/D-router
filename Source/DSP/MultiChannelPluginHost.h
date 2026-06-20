@@ -60,6 +60,10 @@ private:
     double                                      sampleRate = 48000.0;
     int                                         blockSize = 128;
     int                                         numChannels = 2;
+    // The bus layout last requested via setPlugin().  prepare() re-applies it
+    // on an engine restart so a multichannel AU isn't left re-prepared with a
+    // default (often mono/stereo) layout -> silent / inert.
+    juce::AudioChannelSet                       lastLayout = juce::AudioChannelSet::stereo();
 };
 
 } // namespace dcr

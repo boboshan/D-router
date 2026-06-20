@@ -246,6 +246,13 @@ void OutputGroupPanel::Card::buildFor (OutputGroupPanel& p, int gIdx)
             auto* b = getSlotHost (to);
             if (a != nullptr && b != nullptr)
             {
+                // Close any open editors for BOTH slots first.  swapStateWith
+                // moves the plugin instances between hosts; an editor left open
+                // would keep a reference to a plugin that now lives in the other
+                // slot, and tearing it down (or reopening) later can crash on the
+                // AU view teardown.  Reopen fresh after the move.
+                closeEditorFor (from);
+                closeEditorFor (to);
                 a->swapStateWith (*b);
                 refreshSlotAppearance (from);
                 refreshSlotAppearance (to);
