@@ -1,0 +1,55 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: brew install cmake ninja
+      - name: Cache JUCE FetchContent
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-8.0.4-${{ runner.os }}
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: Build app
+        run: cmake --build build -j
+      - name: Build tests
+        run: cmake --build build --target dcorerouter_tests --target dcorerouter_tests_juce -j
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+  format-check:
+    # The whole tree was reformatted to the adopted JUCE config (commit
+    # 7965704), so a full-tree check is valid and simplest. Includes DSP —
+    # everything is formatted.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: brew install clang-format
+      - name: clang-format whole tree (must be idempotent)
+        run: |
+          files=$(find Source tests -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
+          clang-format --dry-run --Werror $files
+
+  lint:
+    runs-on: macos-14
+    continue-on-error: true   # non-blocking in Phase A
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install cmake ninja llvm
+      - name: Configure (compile commands)
+        run: cmake -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE=Debug
+      - name: clang-tidy non-DSP sources
+        run: |
+          files=$(git ls-files 'Source/**/*.cpp' | grep -v '^Source/DSP/' || true)
+          [ -z "$files" ] && exit 0
+          $(brew --prefix llvm)/bin/clang-tidy -p build $files || true
