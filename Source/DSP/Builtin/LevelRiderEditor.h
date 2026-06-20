@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
+#include <cmath>
 
 namespace dcr::builtin
 {
@@ -52,10 +53,17 @@ public:
 private:
     void timerCallback() override
     {
-        // Push the latest rider gain into the scrolling history ring.
-        history[(size_t) writePos] = rider.getRiderGainDb();
+        // Push the latest rider gain into the scrolling history ring.  Guard
+        // against a NaN/Inf readout freezing the graph (a bad sample would
+        // otherwise persist in the ring and the curve would flatline).
+        float g = rider.getRiderGainDb();
+        if (! std::isfinite (g)) g = 0.0f;
+        history[(size_t) writePos] = g;
         writePos = (writePos + 1) % (int) history.size();
-        repaint (topArea);
+        // Repaint the top region by absolute bounds (not the cached topArea
+        // rect, which can be momentarily empty/stale right after a resize) so
+        // the graph + meter never stop animating.
+        repaint (0, 0, getWidth(), topHeight);
     }
 
     float rangeDb() const
