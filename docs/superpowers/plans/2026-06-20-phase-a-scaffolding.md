@@ -486,22 +486,18 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   format-check:
+    # The whole tree was reformatted to the adopted JUCE config (commit
+    # 7965704), so a full-tree check is valid and simplest. Includes DSP —
+    # everything is formatted.
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Install clang-format
         run: brew install clang-format
-      - name: clang-format changed files
+      - name: clang-format whole tree (must be idempotent)
         run: |
-          base="${{ github.event.pull_request.base.sha }}"
-          if [ -z "$base" ]; then base="$(git rev-parse HEAD~1)"; fi
-          changed=$(git diff --name-only "$base" HEAD -- '*.cpp' '*.h' '*.mm' \
-                    | grep -v '^Source/DSP/' || true)
-          if [ -z "$changed" ]; then echo "no non-DSP C++ files changed"; exit 0; fi
-          echo "$changed"
-          clang-format --dry-run --Werror $changed
+          files=$(find Source tests -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' \))
+          clang-format --dry-run --Werror $files
 
   lint:
     runs-on: macos-14
