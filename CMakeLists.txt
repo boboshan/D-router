@@ -121,7 +121,9 @@ juce_generate_juce_header(dcorerouter_tests_juce)
 target_sources(dcorerouter_tests_juce PRIVATE
     tests/juce/TestMainJuce.cpp
     tests/juce/SnapshotStoreTests.cpp
+    tests/juce/SettingsStoreTests.cpp
     Source/Persistence/SnapshotStore.cpp
+    Source/Persistence/SettingsStore.cpp
 )
 target_include_directories(dcorerouter_tests_juce PRIVATE Source)
 target_compile_definitions(dcorerouter_tests_juce PRIVATE
