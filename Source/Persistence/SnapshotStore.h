@@ -81,11 +81,26 @@ namespace dcr
     class SnapshotStore
     {
     public:
+        // Bumped only on an incompatible snapshot-schema change.  toValueTree()
+        // stamps it; load() rejects anything newer.
+        static constexpr int kVersion = 1;
+
+        // Why a load failed -- lets crash-recovery tell "no snapshot yet" (fine,
+        // start blank) apart from "file is corrupt / from a newer build" (worth
+        // telling the user) instead of collapsing both into a bare false.
+        enum class LoadResult {
+            Ok,
+            NoFile,
+            ParseError,
+            UnsupportedVersion,
+            Corrupt
+        };
+
         static juce::File getDirectory(); // ~/Library/Application Support/dcorerouter/snapshots
         static juce::File getLastUsedFile(); // ~/Library/Application Support/dcorerouter/last.xml
 
         static bool save (const juce::File& file, const Snapshot& s);
-        static bool load (const juce::File& file, Snapshot& outSnap);
+        static LoadResult load (const juce::File& file, Snapshot& outSnap);
 
         // ValueTree <-> Snapshot
         static juce::ValueTree toValueTree (const Snapshot& s);

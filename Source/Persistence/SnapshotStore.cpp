@@ -78,7 +78,7 @@ namespace dcr
     juce::ValueTree SnapshotStore::toValueTree (const Snapshot& s)
     {
         juce::ValueTree root (ids::root);
-        root.setProperty (ids::version, 1, nullptr);
+        root.setProperty (ids::version, kVersion, nullptr);
 
         juce::ValueTree eng (ids::engine);
         eng.setProperty (ids::sampleRate, s.engineSampleRate, nullptr);
@@ -405,18 +405,29 @@ namespace dcr
         return xml->writeTo (file);
     }
 
-    bool SnapshotStore::load (const juce::File& file, Snapshot& outSnap)
+    SnapshotStore::LoadResult SnapshotStore::load (const juce::File& file, Snapshot& outSnap)
     {
         if (!file.existsAsFile())
-            return false;
+            return LoadResult::NoFile;
+
         auto xml = juce::parseXML (file);
         if (xml == nullptr)
-            return false;
+            return LoadResult::ParseError; // not well-formed XML at all
+
         auto tree = juce::ValueTree::fromXml (*xml);
-        if (!tree.isValid())
-            return false;
+        if (!tree.isValid() || !tree.hasType (ids::root))
+            return LoadResult::Corrupt; // XML, but not one of ours
+
+        // The writer has always stamped version >= 1, so a missing/zero version
+        // on a root-typed file means it's foreign or truncated, not a legacy v0.
+        const int version = (int) tree.getProperty (ids::version, 0);
+        if (version <= 0)
+            return LoadResult::Corrupt;
+        if (version > kVersion)
+            return LoadResult::UnsupportedVersion; // written by a newer build
+
         outSnap = fromValueTree (tree);
-        return true;
+        return LoadResult::Ok;
     }
 
 } // namespace dcr

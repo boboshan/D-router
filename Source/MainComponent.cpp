@@ -304,7 +304,8 @@ namespace dcr
                         if (result == 1) // first button => Restore
                         {
                             Snapshot s;
-                            if (SnapshotStore::load (SnapshotStore::getLastUsedFile(), s))
+                            if (SnapshotStore::load (SnapshotStore::getLastUsedFile(), s)
+                                == SnapshotStore::LoadResult::Ok)
                             {
                                 applySnapshot (s);
                                 restored = true;
@@ -328,7 +329,8 @@ namespace dcr
         {
             // Normal clean-exit path: auto-restore last session immediately.
             Snapshot s;
-            if (SnapshotStore::load (SnapshotStore::getLastUsedFile(), s))
+            if (SnapshotStore::load (SnapshotStore::getLastUsedFile(), s)
+                == SnapshotStore::LoadResult::Ok)
                 applySnapshot (s);
             else
             {
@@ -1879,8 +1881,15 @@ namespace dcr
                 if (file == juce::File {} || !file.existsAsFile())
                     return;
                 Snapshot s;
-                if (SnapshotStore::load (file, s))
+                const auto res = SnapshotStore::load (file, s);
+                if (res == SnapshotStore::LoadResult::Ok)
                     applySnapshot (s);
+                else if (res != SnapshotStore::LoadResult::NoFile)
+                    juce::NativeMessageBox::showMessageBoxAsync (
+                        juce::MessageBoxIconType::WarningIcon,
+                        "Could not load snapshot",
+                        "\"" + file.getFileName() + "\" could not be loaded -- it may be "
+                                                    "corrupt or saved by a newer version of D-Router.");
             });
     }
 
