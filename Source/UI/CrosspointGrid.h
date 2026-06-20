@@ -23,7 +23,7 @@ public:
     // Each visible row or column may correspond to a RANGE of engine
     // channels (when a device is collapsed in the matrix view).  count==1
     // is the normal "expanded" case; count>1 makes the cell render as a
-    // Dante-style aggregate (lit iff any underlying engine crosspoint
+    // device-level aggregate (lit iff any underlying engine crosspoint
     // has gain > 0), and clicks on aggregate cells are no-ops.
     struct CellSpan { int firstCh = 0; int count = 1; };
 

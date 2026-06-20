@@ -10,7 +10,7 @@ namespace dcr::builtin
 {
 
 // ===========================================================================
-// Spectral Auto-EQ (Gullfoss-style) -- continuously balances the tone by
+// Spectral Auto-EQ -- continuously balances the tone by
 // flattening each band toward the broadband spectral trend.  Peaks above the
 // trend are tamed; dips below it are recovered.  A tilt control brightens /
 // darkens, and the whole correction is time-smoothed per bin so it rides the

@@ -9,7 +9,7 @@ namespace dcr::builtin
 {
 
 // ===========================================================================
-// Resonance Suppressor (soothe-style) -- finds bins that stick out above the
+// Resonance Suppressor -- finds bins that stick out above the
 // smooth spectral baseline (resonances / harshness) and dynamically ducks
 // them, with attack/release per bin so it only acts while the resonance rings.
 // Built on the shared STFT engine.

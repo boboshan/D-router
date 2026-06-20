@@ -85,7 +85,7 @@ public:
     // Per-direction, per-device.  A collapsed device shows in the rail as a
     // single virtual row (input) or column (output) with a [+] button to
     // re-expand.  The collapsed cell at the intersection of two
-    // collapsed-or-expanded devices is rendered as a Dante-style aggregate
+    // collapsed-or-expanded devices is rendered as a device-level aggregate
     // crosspoint: lit if ANY underlying channel-pair has a non-zero gain.
     // Engine state (gains, mutes, plugin chains) is preserved while
     // collapsed -- this is purely a UI-visibility toggle.
@@ -109,8 +109,8 @@ public:
     static constexpr int cellSize       = 36;
     static constexpr int labelColWidth  = 310;   // widened to fit input FX button
     // Top-rail height needs to be tall enough to fit the rotated device +
-    // channel labels at a readable size on long device names like
-    // "Pro Tools Audio Bridge 16 ch.16".  At ~280 px the rotated string
+    // channel labels at a readable size on a long multi-channel device
+    // name.  At ~280 px the rotated string
     // gets ~250 px of arc length, which fits a 14 pt monospaced label
     // without truncation.
     static constexpr int labelRowHeight = 280;

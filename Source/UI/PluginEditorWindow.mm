@@ -94,7 +94,7 @@ PluginEditorWindow::PluginEditorWindow (juce::AudioPluginInstance& p,
 
     setUsingNativeTitleBar (true);
 
-    // CRITICAL ORDER (Youlean Loudness Meter 2 crash):  realise the empty
+    // CRITICAL ORDER (a known GPU-backed metering plug-in crash):  realise the empty
     // NSWindow on the desktop BEFORE attaching the plugin's NSView, so the
     // plugin's -[NSView _setWindow:] handler sees a fully-alive host
     // window (not a half-built one with nil backingScaleFactor).
@@ -120,7 +120,7 @@ PluginEditorWindow::PluginEditorWindow (juce::AudioPluginInstance& p,
         // (to refresh desktop window style flags) whenever isOnDesktop()
         // is true.  That re-addToDesktop sends -[NSView _setWindow:]
         // through the entire NSView tree -- which by now includes the
-        // freshly-attached plugin NSView.  Youlean Loudness Meter 2's
+        // freshly-attached plugin NSView.  Such a plug-in's
         // _setWindow: handler crashes on this second migration even
         // though the first one (no plugin attached yet) was fine.
         //
@@ -182,8 +182,8 @@ PluginEditorWindow::~PluginEditorWindow()
     if (paramLink != nullptr)
         plugin.removeListener (paramLink.get());
 
-    // Hide the window FIRST so a GPU-backed plugin view (soothe3, Youlean,
-    // FabFilter, ...) isn't being composited while its NSView is detached /
+    // Hide the window FIRST so a GPU-backed plug-in view isn't being
+    // composited while its NSView is detached /
     // destroyed.  Tearing those views down while they're still on screen has
     // crashed the app (SIGSEGV deep in the AU's own view teardown).
     setVisible (false);

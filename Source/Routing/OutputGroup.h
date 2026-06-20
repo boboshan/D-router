@@ -16,7 +16,7 @@ namespace dcr {
 //
 //   Linked-fader semantics:
 //     Moving the group fader moves each member channel's outputTrim by the
-//     same dB delta (Pro Tools "Group" behaviour, not VCA modulation).
+//     same dB delta (linked-group behaviour, not VCA modulation).
 //   Group mute:
 //     ORed onto each member's mute - while group mute is on, members are
 //     silenced regardless of their own mute state.

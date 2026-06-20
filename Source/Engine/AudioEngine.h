@@ -50,8 +50,8 @@ public:
         juce::String name;
         bool wantInput  = false;
         bool wantOutput = false;
-        // Virtual loopback devices (BlackHole, Loopback, VB-Cable, Pro Tools
-        // Audio Bridge, ...) feed their output straight back to their input.
+        // Virtual loopback / audio-bridge devices feed their output straight
+        // back to their input.
         // Routing this device's input ch N to its OWN output ch N then makes
         // a runaway feedback loop.  When this is set, the engine blocks those
         // same-device / same-channel crosspoints in the matrix.  Defaults to

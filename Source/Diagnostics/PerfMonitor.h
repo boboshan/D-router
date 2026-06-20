@@ -21,7 +21,7 @@ class AudioEngine;
 //      so the ratios reflect THIS interval, not lifetime cumulative.
 //
 //   2. Top plugin CPU consumers.
-//        ... topPlugins: [ProQ3:43.2%, AUCompressor:8.1%, ...]
+//        ... topPlugins: [EQ:43.2%, Compressor:8.1%, ...]
 //      Reads per-slot cpuLoadAvg from every PluginHost / MultiChannel-
 //      PluginHost and surfaces the worst 3.
 //

@@ -1869,7 +1869,7 @@ void MatrixView::showEditorFor (bool isInput, int ch, int slotIdx)
         return;
     }
 
-    // Build a context label like "INPUT BlackHole 2ch ch.1 / slot 2".
+    // Build a context label like "INPUT <device> ch.1 / slot 2".
     juce::String ctx;
     {
         const auto& labels = isInput ? inputLabels : outputLabels;

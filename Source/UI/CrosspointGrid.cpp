@@ -203,7 +203,7 @@ void CrosspointGrid::paint (juce::Graphics& g)
             auto r = cellBounds (m, n).toFloat().reduced (1.0f);
 
             // Aggregate cell: at least one of the row/column spans covers
-            // more than one engine channel.  Render Dante-style -- a single
+            // more than one engine channel.  Render as an aggregate -- a single
             // "device pair" cell, lit if ANY underlying x-point routes,
             // dark otherwise.  No gain readout, no toggle on click (the
             // user expands the device first to route precisely).

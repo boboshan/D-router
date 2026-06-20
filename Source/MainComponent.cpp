@@ -414,8 +414,8 @@ MainComponent::~MainComponent()
 void MainComponent::parentHierarchyChanged()
 {
     // OpenGL deliberately NOT attached.  GL-using plugin editors (analyzer /
-    // metering plugins like Youlean Loudness Meter, FabFilter visualisers,
-    // SPAN) want to set up their own NSOpenGLContext.  When our main window
+    // metering plug-ins) want to set up their own NSOpenGLContext.  When our
+    // main window
     // already owns a JUCE OpenGLContext, the two contexts fight: the
     // plugin's editor reads the wrong framebuffer, GL state leaks across
     // contexts, and the plugin segfaults somewhere deep in AGXMetalG13X /
@@ -1039,7 +1039,7 @@ void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> n
     // every AU) is DEFERRED to the worker thread below.  Reading plugin state
     // here -- on the message thread, while the matrix processor is still
     // running -- is UB per JUCE (concurrent with processBlock) and can yield a
-    // torn state blob for heavy stateful AUs (e.g. soothe3).  The worker
+    // torn state blob for heavy stateful AUs.  The worker
     // harvests only AFTER its fade-out + stopProcessor(), mirroring the safe
     // ~MainComponent shutdown order.
     //
@@ -1565,7 +1565,7 @@ void MainComponent::processNextPluginLoad()
                 // (prepareToPlay THEN setStateInformation) while the instance
                 // is still off the audio thread.  The old "set state then let
                 // setPluginAt re-prepare" sequence discarded the state or threw
-                // out of stateful AUs (soothe3 etc.), leaving the slot broken
+                // out of stateful AUs, leaving the slot broken
                 // and silent until a manual reload.
                 const juce::MemoryBlock* statePtr =
                     j.state.getSize() > 0 ? &j.state : nullptr;

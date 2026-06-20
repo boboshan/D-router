@@ -43,7 +43,7 @@ DeviceManagerDialog::DeviceManagerDialog (AudioEngine& e,
         row->noLoopBtn.setButtonText ("No loop");
         row->noLoopBtn.setTooltip ("Block this device's input channel N from feeding its OWN output "
                                    "channel N (prevents virtual-cable feedback).  Recommended ON for "
-                                   "BlackHole / Loopback / VB-Cable / Pro Tools Audio Bridge etc.");
+                                   "virtual loopback / audio-bridge devices.");
         row->noLoopBtn.setEnabled (duplex);
         row->noLoopBtn.setToggleState (duplex && AudioEngine::isLikelyVirtualDevice (name),
                                        juce::dontSendNotification);
