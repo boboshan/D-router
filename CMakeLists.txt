@@ -120,8 +120,10 @@ target_sources(dcorerouter_tests_juce PRIVATE
     tests/juce/TestMainJuce.cpp
     tests/juce/SnapshotStoreTests.cpp
     tests/juce/SettingsStoreTests.cpp
+    tests/juce/AtomicXmlWriteTests.cpp
     Source/Persistence/SnapshotStore.cpp
     Source/Persistence/SettingsStore.cpp
+    Source/Persistence/AtomicXmlWrite.cpp
 )
 target_include_directories(dcorerouter_tests_juce PRIVATE Source)
 target_compile_definitions(dcorerouter_tests_juce PRIVATE
