@@ -193,14 +193,20 @@ namespace dcr
 
         // Output Group Panel setup
         addChildComponent (groupPanel);
-        groupPanel.onPopOutRequested = [this] { toggleGroupPanelDetach(); };
+        groupHost.windowSize = [] { return juce::Point<int> { juce::jmax (820, cards_default_width()), 240 }; };
+        groupHost.setPanelDetached = [this] (bool d) { groupPanel.setDetached (d); };
+        groupHost.onChanged = [this] { switchTab (currentTab); };
+        groupPanel.onPopOutRequested = [this] { groupHost.toggle(); };
         groupPanel.onGroupHover = [this] (const std::vector<int>& outs) {
             matrixView.setHighlightedOutputs (outs);
         };
 
         // Input Group Panel setup
         addChildComponent (inputGroupPanel);
-        inputGroupPanel.onPopOutRequested = [this] { toggleInputGroupPanelDetach(); };
+        inputGroupHost.windowSize = [] { return juce::Point<int> { juce::jmax (820, cards_default_width()), 240 }; };
+        inputGroupHost.setPanelDetached = [this] (bool d) { inputGroupPanel.setDetached (d); };
+        inputGroupHost.onChanged = [this] { switchTab (currentTab); };
+        inputGroupPanel.onPopOutRequested = [this] { inputGroupHost.toggle(); };
         inputGroupPanel.onGroupHover = [this] (const std::vector<int>& ins) {
             matrixView.setHighlightedInputs (ins);
         };
@@ -254,7 +260,10 @@ namespace dcr
 
         // Status Panel setup
         addChildComponent (statusPanel);
-        statusPanel.onPopOutRequested = [this] { toggleStatusPanelDetach(); };
+        statusHost.windowSize = [] { return juce::Point<int> { 600, 280 }; };
+        statusHost.setPanelDetached = [this] (bool d) { statusPanel.setDetached (d); };
+        statusHost.onChanged = [this] { switchTab (currentTab); };
+        statusPanel.onPopOutRequested = [this] { statusHost.toggle(); };
 
         // Load persistent settings (engine SR, ring sizes, SRC quality, theme).
         engine.setSettings (SettingsStore::load());
@@ -922,143 +931,23 @@ namespace dcr
             r.removeFromTop (6);
             auto bottomHalf = r;
 
-            if (inputGroupPanelDetached)
+            if (inputGroupHost.isDetached())
                 inputGroupsPlaceholder.setBounds (topHalf);
             else
                 inputGroupPanel.setBounds (topHalf);
 
-            if (groupPanelDetached)
+            if (groupHost.isDetached())
                 groupsPlaceholder.setBounds (bottomHalf);
             else
                 groupPanel.setBounds (bottomHalf);
         }
         else if (currentTab == StatusTab)
         {
-            if (statusPanelDetached)
+            if (statusHost.isDetached())
                 statusPlaceholder.setBounds (r);
             else
                 statusPanel.setBounds (r);
         }
-    }
-
-    namespace
-    {
-        class GroupFloatingWindow : public juce::DocumentWindow
-        {
-        public:
-            GroupFloatingWindow (std::function<void()> onClose)
-                : DocumentWindow ("Output groups",
-                      juce::Colour::fromRGB (28, 28, 32),
-                      DocumentWindow::closeButton),
-                  closeFn (std::move (onClose))
-            {
-                setUsingNativeTitleBar (true);
-                setResizable (true, false);
-            }
-            void closeButtonPressed() override
-            {
-                if (closeFn)
-                    closeFn();
-            }
-
-        private:
-            std::function<void()> closeFn;
-        };
-    }
-
-    void MainComponent::toggleStatusPanelDetach()
-    {
-        statusPanelDetached = !statusPanelDetached;
-
-        if (statusPanelDetached)
-        {
-            removeChildComponent (&statusPanel);
-            statusWindow.reset (new GroupFloatingWindow ([this] {
-                if (statusPanelDetached)
-                    toggleStatusPanelDetach();
-            }));
-            statusWindow->setName ("Engine status");
-            statusWindow->setContentNonOwned (&statusPanel, false);
-            statusWindow->centreWithSize (600, 280);
-            statusWindow->setVisible (true);
-            statusPanel.setVisible (true);
-            statusPanel.setDetached (true);
-        }
-        else
-        {
-            if (statusWindow)
-            {
-                statusWindow->clearContentComponent();
-                statusWindow.reset();
-            }
-            addAndMakeVisible (statusPanel);
-            statusPanel.setDetached (false);
-        }
-        switchTab (currentTab);
-    }
-
-    void MainComponent::toggleInputGroupPanelDetach()
-    {
-        inputGroupPanelDetached = !inputGroupPanelDetached;
-
-        if (inputGroupPanelDetached)
-        {
-            removeChildComponent (&inputGroupPanel);
-            inputGroupWindow.reset (new GroupFloatingWindow ([this] {
-                if (inputGroupPanelDetached)
-                    toggleInputGroupPanelDetach();
-            }));
-            inputGroupWindow->setName ("Input groups");
-            inputGroupWindow->setContentNonOwned (&inputGroupPanel, false);
-            inputGroupWindow->centreWithSize (juce::jmax (820, cards_default_width()), 240);
-            inputGroupWindow->setVisible (true);
-            inputGroupPanel.setVisible (true);
-            inputGroupPanel.setDetached (true);
-        }
-        else
-        {
-            if (inputGroupWindow)
-            {
-                inputGroupWindow->clearContentComponent();
-                inputGroupWindow.reset();
-            }
-            addAndMakeVisible (inputGroupPanel);
-            inputGroupPanel.setDetached (false);
-        }
-        switchTab (currentTab);
-    }
-
-    void MainComponent::toggleGroupPanelDetach()
-    {
-        groupPanelDetached = !groupPanelDetached;
-
-        if (groupPanelDetached)
-        {
-            // Move panel out into a separate window.
-            removeChildComponent (&groupPanel);
-            groupWindow.reset (new GroupFloatingWindow ([this] {
-                // Window closed -> re-embed.
-                if (groupPanelDetached)
-                    toggleGroupPanelDetach();
-            }));
-            groupWindow->setContentNonOwned (&groupPanel, false);
-            groupWindow->centreWithSize (juce::jmax (820, cards_default_width()),
-                juce::jmax (240, 240));
-            groupWindow->setVisible (true);
-            groupPanel.setVisible (true);
-            groupPanel.setDetached (true);
-        }
-        else
-        {
-            if (groupWindow)
-            {
-                groupWindow->clearContentComponent();
-                groupWindow.reset();
-            }
-            addAndMakeVisible (groupPanel);
-            groupPanel.setDetached (false);
-        }
-        switchTab (currentTab);
     }
 
     int MainComponent::cards_default_width() { return 800; }
@@ -1969,51 +1858,45 @@ namespace dcr
 
         matrixView.setVisible (currentTab == RoutingTab);
 
-        // Keep floating/detached panels visible so they display in their windows
-        if (groupPanelDetached)
-            groupPanel.setVisible (true);
-        if (statusPanelDetached)
-            statusPanel.setVisible (true);
-
         // Keep detached panels themselves visible (they live in their own windows).
-        if (groupPanelDetached)
+        if (groupHost.isDetached())
             groupPanel.setVisible (true);
-        if (inputGroupPanelDetached)
+        if (inputGroupHost.isDetached())
             inputGroupPanel.setVisible (true);
-        if (statusPanelDetached)
+        if (statusHost.isDetached())
             statusPanel.setVisible (true);
 
         if (currentTab == GroupsTab)
         {
-            groupsPlaceholder.setVisible (groupPanelDetached);
-            inputGroupsPlaceholder.setVisible (inputGroupPanelDetached);
-            if (!groupPanelDetached)
+            groupsPlaceholder.setVisible (groupHost.isDetached());
+            inputGroupsPlaceholder.setVisible (inputGroupHost.isDetached());
+            if (!groupHost.isDetached())
                 groupPanel.setVisible (true);
-            if (!inputGroupPanelDetached)
+            if (!inputGroupHost.isDetached())
                 inputGroupPanel.setVisible (true);
-            if (!statusPanelDetached)
+            if (!statusHost.isDetached())
                 statusPanel.setVisible (false);
             statusPlaceholder.setVisible (false);
         }
         else if (currentTab == StatusTab)
         {
-            statusPlaceholder.setVisible (statusPanelDetached);
-            if (!statusPanelDetached)
+            statusPlaceholder.setVisible (statusHost.isDetached());
+            if (!statusHost.isDetached())
                 statusPanel.setVisible (true);
-            if (!groupPanelDetached)
+            if (!groupHost.isDetached())
                 groupPanel.setVisible (false);
-            if (!inputGroupPanelDetached)
+            if (!inputGroupHost.isDetached())
                 inputGroupPanel.setVisible (false);
             groupsPlaceholder.setVisible (false);
             inputGroupsPlaceholder.setVisible (false);
         }
         else // RoutingTab
         {
-            if (!groupPanelDetached)
+            if (!groupHost.isDetached())
                 groupPanel.setVisible (false);
-            if (!inputGroupPanelDetached)
+            if (!inputGroupHost.isDetached())
                 inputGroupPanel.setVisible (false);
-            if (!statusPanelDetached)
+            if (!statusHost.isDetached())
                 statusPanel.setVisible (false);
             groupsPlaceholder.setVisible (false);
             inputGroupsPlaceholder.setVisible (false);

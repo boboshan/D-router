@@ -49,6 +49,7 @@ target_sources(dcorerouter PRIVATE
     Source/UI/GroupManagerDialog.cpp
     Source/UI/OutputGroupPanel.cpp
     Source/UI/StatusPanel.cpp
+    Source/UI/PanelHost.cpp
     Source/UI/LevelMeter.cpp
     Source/Persistence/SnapshotStore.cpp
     Source/Persistence/SettingsStore.cpp

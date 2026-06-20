@@ -16,6 +16,7 @@
 #include "UI/LookAndFeel.h"
 #include "UI/MatrixView.h"
 #include "UI/OutputGroupPanel.h"
+#include "UI/PanelHost.h"
 #include "UI/StatusPanel.h"
 #include "Update/UpdateChecker.h"
 
@@ -230,16 +231,12 @@ namespace dcr
         // Full-window overlay shown during startup splash + matrix rebuilds.
         LoadingOverlay loadingOverlay;
 
-        bool groupPanelDetached = false;
-        bool inputGroupPanelDetached = false;
-        bool statusPanelDetached = false;
-        std::unique_ptr<juce::DocumentWindow> groupWindow;
-        std::unique_ptr<juce::DocumentWindow> inputGroupWindow;
-        std::unique_ptr<juce::DocumentWindow> statusWindow;
+        // Each detachable panel is one PanelHost slot (Phase C2).  Declared
+        // after the panels they reference so they tear down first.
+        PanelHost groupHost { *this, groupPanel, "Output groups" };
+        PanelHost inputGroupHost { *this, inputGroupPanel, "Input groups" };
+        PanelHost statusHost { *this, statusPanel, "Engine status" };
 
-        void toggleGroupPanelDetach();
-        void toggleInputGroupPanelDetach();
-        void toggleStatusPanelDetach();
         void switchTab (Tab newTab);
         static int cards_default_width();
 
