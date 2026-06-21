@@ -7,14 +7,14 @@
 // staging) are intentionally NOT here -- they belong in a JUCE-linked target;
 // see the PR notes.
 
+#include "DSP/Builtin/ResonanceMath.h"
+#include "DSP/Builtin/SpectralNodeMath.h"
 #include "Engine/PdcDelayLine.h"
 #include "Engine/PdcPlan.h"
 #include "Engine/RingBuffer.h"
 #include "Routing/GroupGain.h"
 #include "Routing/PanicController.h"
 #include "Routing/RoutingMatrix.h"
-#include "DSP/Builtin/ResonanceMath.h"
-#include "DSP/Builtin/SpectralNodeMath.h"
 #include "Update/Version.h"
 
 #include <algorithm>
@@ -620,147 +620,146 @@ namespace
             CHECK (std::isfinite (v));
     }
 
-// ---------------------------------------------------------------------------
-// ResonanceMath (Resonance Suppressor: node log-grid + threshold->reduction).
-// JUCE-free deterministic pieces shared by the processor and editor; the
-// per-bin attack/release smoothing is stateful and lives in the processor
-// (verified by build + real-device listening, not here).
-// ---------------------------------------------------------------------------
-void test_resonance_node_freq()
-{
-    using namespace dcr::resonance;
-    // 31-node log grid spans 20 Hz .. 20 kHz with clean decade anchors.
-    CHECK (feq (nodeFreq (0, 31),  20.0f));
-    CHECK (feq (nodeFreq (30, 31), 20000.0f, 1.0e-2f));
-    CHECK (feq (nodeFreq (10, 31), 200.0f,  1.0e-2f));    // 1000^(1/3) == 10
-    CHECK (feq (nodeFreq (20, 31), 2000.0f, 1.0e-2f));    // 1000^(2/3) == 100
-    CHECK (feq (nodeFreq (15, 31), 632.4555f, 1.0e-2f));  // 20*sqrt(1000)
-    // out-of-range indices clamp to the ends.
-    CHECK (feq (nodeFreq (-5, 31), 20.0f));
-    CHECK (feq (nodeFreq (99, 31), 20000.0f, 1.0e-2f));
-}
-
-void test_resonance_node_interp()
-{
-    using namespace dcr::resonance;
-    // nodeInterp is the inverse of nodeFreq: a node's own frequency maps back
-    // to that node's continuous position lo+frac (== i).  We assert the
-    // position, not the lo/frac split -- at an exact boundary (i,0) and
-    // (i-1,1) are the same point and float rounding may return either.
-    for (int i = 0; i <= 29; ++i)
+    // ---------------------------------------------------------------------------
+    // ResonanceMath (Resonance Suppressor: node log-grid + threshold->reduction).
+    // JUCE-free deterministic pieces shared by the processor and editor; the
+    // per-bin attack/release smoothing is stateful and lives in the processor
+    // (verified by build + real-device listening, not here).
+    // ---------------------------------------------------------------------------
+    void test_resonance_node_freq()
     {
-        auto ni = nodeInterp (nodeFreq (i, 31), 31);
-        CHECK (feq ((float) ni.lo + ni.frac, (float) i, 1.0e-3f));
+        using namespace dcr::resonance;
+        // 31-node log grid spans 20 Hz .. 20 kHz with clean decade anchors.
+        CHECK (feq (nodeFreq (0, 31), 20.0f));
+        CHECK (feq (nodeFreq (30, 31), 20000.0f, 1.0e-2f));
+        CHECK (feq (nodeFreq (10, 31), 200.0f, 1.0e-2f)); // 1000^(1/3) == 10
+        CHECK (feq (nodeFreq (20, 31), 2000.0f, 1.0e-2f)); // 1000^(2/3) == 100
+        CHECK (feq (nodeFreq (15, 31), 632.4555f, 1.0e-2f)); // 20*sqrt(1000)
+        // out-of-range indices clamp to the ends.
+        CHECK (feq (nodeFreq (-5, 31), 20.0f));
+        CHECK (feq (nodeFreq (99, 31), 20000.0f, 1.0e-2f));
     }
-    // The top frequency lands on the last segment fully toward the top node.
-    auto top = nodeInterp (nodeFreq (30, 31), 31);
-    CHECK (top.lo == 29);
-    CHECK (feq (top.frac, 1.0f, 1.0e-3f));
-    // A frequency halfway (in log) between nodes 10 and 11 -> frac 0.5.
-    const float fMid = 20.0f * std::pow (1000.0f, 10.5f / 30.0f);
-    auto mid = nodeInterp (fMid, 31);
-    CHECK (mid.lo == 10);
-    CHECK (feq (mid.frac, 0.5f, 1.0e-3f));
-    // Below/above the grid clamp to the end segments.
-    auto lo = nodeInterp (5.0f, 31);
-    CHECK (lo.lo == 0 && feq (lo.frac, 0.0f));
-    auto hi = nodeInterp (40000.0f, 31);
-    CHECK (hi.lo == 29 && feq (hi.frac, 1.0f, 1.0e-3f));
-}
 
-void test_resonance_target_reduction()
-{
-    using namespace dcr::resonance;
-    // Below baseline+threshold -> no reduction.
-    CHECK (feq (targetReductionDb (-40.0f, -50.0f, 12.0f, 0.8f, 24.0f), 0.0f));
-    // Exactly at threshold (excess 0) -> no reduction.
-    CHECK (feq (targetReductionDb (-30.0f, -50.0f, 20.0f, 1.0f, 24.0f), 0.0f));
-    // Excess * sharpness, below the ceiling -> negative reduction. excess 16 * 0.8.
-    CHECK (feq (targetReductionDb (-30.0f, -50.0f, 4.0f, 0.8f, 24.0f), -12.8f, 1.0e-4f));
-    // Clamped at max reduction.
-    CHECK (feq (targetReductionDb (-30.0f, -50.0f, 4.0f, 0.8f, 10.0f), -10.0f));
-    // Raising the (per-frequency) threshold reduces the action monotonically.
-    const float a = targetReductionDb (-30.0f, -50.0f, 10.0f, 1.0f, 24.0f);   // excess 10 -> -10
-    const float b = targetReductionDb (-30.0f, -50.0f, 18.0f, 1.0f, 24.0f);   // excess  2 -> -2
-    CHECK (feq (a, -10.0f));
-    CHECK (feq (b, -2.0f));
-    CHECK (b > a);                 // higher threshold => less (closer to 0) reduction
-    // Reduction is never positive.
-    CHECK (targetReductionDb (0.0f, -90.0f, 0.0f, 2.0f, 24.0f) <= 0.0f);
-}
-
-void test_resonance_base_strength()
-{
-    using namespace dcr::resonance;
-    CHECK (feq (baseStrengthForRes (3),  0.6f));
-    CHECK (feq (baseStrengthForRes (6),  1.2f));
-    CHECK (feq (baseStrengthForRes (12), 2.4f));
-    CHECK (feq (baseStrengthForRes (24), 4.0f));
-    CHECK (feq (baseStrengthForRes (99), 4.0f));   // default = finest/tightest
-}
-
-// Spectral node-curve preset restore is an untrusted surface: a hand-edited or
-// corrupt blob can carry NaN/Inf or a wild value, which would latch into the
-// per-bin smoother and poison the FFT output with NaN forever.  sanitizeNodeDb
-// is the guard on the way in.
-void test_spectral_sanitize_node_db()
-{
-    using dcr::spectral::sanitizeNodeDb;
-    using dcr::spectral::kNodeLimitDb;
-
-    // In-range values pass through unchanged.
-    CHECK (feq (sanitizeNodeDb (0.0),    0.0f));
-    CHECK (feq (sanitizeNodeDb (6.0),    6.0f));
-    CHECK (feq (sanitizeNodeDb (-12.5), -12.5f));
-    // Exactly at the limits.
-    CHECK (feq (sanitizeNodeDb ( (double) kNodeLimitDb),  kNodeLimitDb));
-    CHECK (feq (sanitizeNodeDb (-(double) kNodeLimitDb), -kNodeLimitDb));
-    // Out of range clamps to the limit (values an untrusted preset might carry).
-    CHECK (feq (sanitizeNodeDb (1.0e308),  kNodeLimitDb));
-    CHECK (feq (sanitizeNodeDb (-500.0),  -kNodeLimitDb));
-    CHECK (feq (sanitizeNodeDb (18.001),   kNodeLimitDb));
-    // Non-finite -> neutral 0 (the bug: NaN/Inf otherwise reached the FFT path,
-    // and juce::jlimit does NOT reject NaN).
-    CHECK (feq (sanitizeNodeDb ((double) NAN),       0.0f));
-    CHECK (feq (sanitizeNodeDb ((double) INFINITY),  0.0f));
-    CHECK (feq (sanitizeNodeDb (-(double) INFINITY), 0.0f));
-    // Whatever comes in, the result is always finite and within the node range.
-    const double probes[] = { (double) NAN, (double) INFINITY, -(double) INFINITY,
-                              1.0e308, -1.0e308, 50.0, -50.0, 3.3 };
-    for (double v : probes)
+    void test_resonance_node_interp()
     {
-        const float r = sanitizeNodeDb (v);
-        CHECK (std::isfinite (r));
-        CHECK (r >= -kNodeLimitDb && r <= kNodeLimitDb);
+        using namespace dcr::resonance;
+        // nodeInterp is the inverse of nodeFreq: a node's own frequency maps back
+        // to that node's continuous position lo+frac (== i).  We assert the
+        // position, not the lo/frac split -- at an exact boundary (i,0) and
+        // (i-1,1) are the same point and float rounding may return either.
+        for (int i = 0; i <= 29; ++i)
+        {
+            auto ni = nodeInterp (nodeFreq (i, 31), 31);
+            CHECK (feq ((float) ni.lo + ni.frac, (float) i, 1.0e-3f));
+        }
+        // The top frequency lands on the last segment fully toward the top node.
+        auto top = nodeInterp (nodeFreq (30, 31), 31);
+        CHECK (top.lo == 29);
+        CHECK (feq (top.frac, 1.0f, 1.0e-3f));
+        // A frequency halfway (in log) between nodes 10 and 11 -> frac 0.5.
+        const float fMid = 20.0f * std::pow (1000.0f, 10.5f / 30.0f);
+        auto mid = nodeInterp (fMid, 31);
+        CHECK (mid.lo == 10);
+        CHECK (feq (mid.frac, 0.5f, 1.0e-3f));
+        // Below/above the grid clamp to the end segments.
+        auto lo = nodeInterp (5.0f, 31);
+        CHECK (lo.lo == 0 && feq (lo.frac, 0.0f));
+        auto hi = nodeInterp (40000.0f, 31);
+        CHECK (hi.lo == 29 && feq (hi.frac, 1.0f, 1.0e-3f));
     }
-}
 
-// GitHub auto-updater version comparison.  Must be numeric (not lexical), treat a
-// prerelease as older than the same stable, and refuse to call a malformed tag
-// "newer" (so a garbage release name can never trigger a spurious update prompt).
-void test_update_version_compare()
-{
-    using namespace dcr::update;
+    void test_resonance_target_reduction()
+    {
+        using namespace dcr::resonance;
+        // Below baseline+threshold -> no reduction.
+        CHECK (feq (targetReductionDb (-40.0f, -50.0f, 12.0f, 0.8f, 24.0f), 0.0f));
+        // Exactly at threshold (excess 0) -> no reduction.
+        CHECK (feq (targetReductionDb (-30.0f, -50.0f, 20.0f, 1.0f, 24.0f), 0.0f));
+        // Excess * sharpness, below the ceiling -> negative reduction. excess 16 * 0.8.
+        CHECK (feq (targetReductionDb (-30.0f, -50.0f, 4.0f, 0.8f, 24.0f), -12.8f, 1.0e-4f));
+        // Clamped at max reduction.
+        CHECK (feq (targetReductionDb (-30.0f, -50.0f, 4.0f, 0.8f, 10.0f), -10.0f));
+        // Raising the (per-frequency) threshold reduces the action monotonically.
+        const float a = targetReductionDb (-30.0f, -50.0f, 10.0f, 1.0f, 24.0f); // excess 10 -> -10
+        const float b = targetReductionDb (-30.0f, -50.0f, 18.0f, 1.0f, 24.0f); // excess  2 -> -2
+        CHECK (feq (a, -10.0f));
+        CHECK (feq (b, -2.0f));
+        CHECK (b > a); // higher threshold => less (closer to 0) reduction
+        // Reduction is never positive.
+        CHECK (targetReductionDb (0.0f, -90.0f, 0.0f, 2.0f, 24.0f) <= 0.0f);
+    }
 
-    CHECK (isNewer ("0.2.0", "0.1.0"));
-    CHECK (isNewer ("v0.2.0", "0.1.0"));            // leading 'v' tolerated
-    CHECK (isNewer ("0.1.1", "0.1.0"));
-    CHECK (isNewer ("1.10.0", "1.9.0"));            // numeric, not lexical ("10" > "9")
-    CHECK (! isNewer ("1.9.0", "1.10.0"));
-    CHECK (isNewer ("0.2.0", "0.2.0-beta"));        // stable > prerelease
-    CHECK (! isNewer ("0.2.0-beta", "0.2.0"));      // prerelease < stable
-    CHECK (isNewer ("0.2.0-beta.2", "0.2.0-beta.1"));
-    CHECK (! isNewer ("0.1.0", "0.1.0"));           // equal -> not newer
-    CHECK (! isNewer ("0.1.0-beta", "0.1.0-beta"));
-    CHECK (! isNewer ("garbage", "0.1.0"));         // malformed candidate -> never newer
-    CHECK (! isNewer ("0.2.0", "garbage"));         // malformed current  -> never newer
-    CHECK (! isNewer ("", "0.1.0"));
+    void test_resonance_base_strength()
+    {
+        using namespace dcr::resonance;
+        CHECK (feq (baseStrengthForRes (3), 0.6f));
+        CHECK (feq (baseStrengthForRes (6), 1.2f));
+        CHECK (feq (baseStrengthForRes (12), 2.4f));
+        CHECK (feq (baseStrengthForRes (24), 4.0f));
+        CHECK (feq (baseStrengthForRes (99), 4.0f)); // default = finest/tightest
+    }
 
-    const Version v = parseVersion ("v0.2.0-beta");
-    CHECK (v.valid && v.major == 0 && v.minor == 2 && v.patch == 0 && v.prerelease == "beta");
-    const Version w = parseVersion ("garbage");
-    CHECK (! w.valid);
-}
+    // Spectral node-curve preset restore is an untrusted surface: a hand-edited or
+    // corrupt blob can carry NaN/Inf or a wild value, which would latch into the
+    // per-bin smoother and poison the FFT output with NaN forever.  sanitizeNodeDb
+    // is the guard on the way in.
+    void test_spectral_sanitize_node_db()
+    {
+        using dcr::spectral::kNodeLimitDb;
+        using dcr::spectral::sanitizeNodeDb;
+
+        // In-range values pass through unchanged.
+        CHECK (feq (sanitizeNodeDb (0.0), 0.0f));
+        CHECK (feq (sanitizeNodeDb (6.0), 6.0f));
+        CHECK (feq (sanitizeNodeDb (-12.5), -12.5f));
+        // Exactly at the limits.
+        CHECK (feq (sanitizeNodeDb ((double) kNodeLimitDb), kNodeLimitDb));
+        CHECK (feq (sanitizeNodeDb (-(double) kNodeLimitDb), -kNodeLimitDb));
+        // Out of range clamps to the limit (values an untrusted preset might carry).
+        CHECK (feq (sanitizeNodeDb (1.0e308), kNodeLimitDb));
+        CHECK (feq (sanitizeNodeDb (-500.0), -kNodeLimitDb));
+        CHECK (feq (sanitizeNodeDb (18.001), kNodeLimitDb));
+        // Non-finite -> neutral 0 (the bug: NaN/Inf otherwise reached the FFT path,
+        // and juce::jlimit does NOT reject NaN).
+        CHECK (feq (sanitizeNodeDb ((double) NAN), 0.0f));
+        CHECK (feq (sanitizeNodeDb ((double) INFINITY), 0.0f));
+        CHECK (feq (sanitizeNodeDb (-(double) INFINITY), 0.0f));
+        // Whatever comes in, the result is always finite and within the node range.
+        const double probes[] = { (double) NAN, (double) INFINITY, -(double) INFINITY, 1.0e308, -1.0e308, 50.0, -50.0, 3.3 };
+        for (double v : probes)
+        {
+            const float r = sanitizeNodeDb (v);
+            CHECK (std::isfinite (r));
+            CHECK (r >= -kNodeLimitDb && r <= kNodeLimitDb);
+        }
+    }
+
+    // GitHub auto-updater version comparison.  Must be numeric (not lexical), treat a
+    // prerelease as older than the same stable, and refuse to call a malformed tag
+    // "newer" (so a garbage release name can never trigger a spurious update prompt).
+    void test_update_version_compare()
+    {
+        using namespace dcr::update;
+
+        CHECK (isNewer ("0.2.0", "0.1.0"));
+        CHECK (isNewer ("v0.2.0", "0.1.0")); // leading 'v' tolerated
+        CHECK (isNewer ("0.1.1", "0.1.0"));
+        CHECK (isNewer ("1.10.0", "1.9.0")); // numeric, not lexical ("10" > "9")
+        CHECK (!isNewer ("1.9.0", "1.10.0"));
+        CHECK (isNewer ("0.2.0", "0.2.0-beta")); // stable > prerelease
+        CHECK (!isNewer ("0.2.0-beta", "0.2.0")); // prerelease < stable
+        CHECK (isNewer ("0.2.0-beta.2", "0.2.0-beta.1"));
+        CHECK (!isNewer ("0.1.0", "0.1.0")); // equal -> not newer
+        CHECK (!isNewer ("0.1.0-beta", "0.1.0-beta"));
+        CHECK (!isNewer ("garbage", "0.1.0")); // malformed candidate -> never newer
+        CHECK (!isNewer ("0.2.0", "garbage")); // malformed current  -> never newer
+        CHECK (!isNewer ("", "0.1.0"));
+
+        const Version v = parseVersion ("v0.2.0-beta");
+        CHECK (v.valid && v.major == 0 && v.minor == 2 && v.patch == 0 && v.prerelease == "beta");
+        const Version w = parseVersion ("garbage");
+        CHECK (!w.valid);
+    }
 
 } // namespace
 
