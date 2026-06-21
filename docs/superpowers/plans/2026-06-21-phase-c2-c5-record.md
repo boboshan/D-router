@@ -51,14 +51,20 @@ atomic stores** — no reordering of the delicate fade → `stopProcessor` → h
 (re-entry rejection, forward-only ordering, terminal `Running`, reuse after
 `finish`) is unit-tested in `dcorerouter_tests` (4 cases).
 
-**What (deferred, deliberately):** The spec also lists `pendingSnap` and the
-plugin-load queue/cursor as state the controller should *own*. Relocating them was
-**not** done: that move risks the documented single-thread `pendingSnap` discipline
-(harvested on the message thread after `stopProcessor`, drained in the reconfig's
-callAsync; a CoreAudio hotplug can re-enter `applyDeviceSelection` mid-flight) and is
-only verifiable on real devices. It is split out as a follow-up to be done with
-device verification, rather than blind. The phase machine already delivers C3's core
-value (nameable, ordered, single-owner, impossible to enter out of order).
+**Payload relocation — NOW DONE** (commit `95faeee`, after the phase machine):
+`PendingSnapshotApply` + the plugin-load queue/cursor/startMs moved out of
+MainComponent into `ReconfigurationController` (its single owner). MainComponent
+accesses them via `reconfig.snapshot()`/`pluginQueue()`/`pluginCursor()`/
+`pluginStartMs()`; each using-scope binds a **local reference alias** so the delicate
+worker/message bodies stay byte-identical — no change to thread timing or the
+single-thread `pendingSnap` discipline (still touched only on the message thread; the
+worker harvests into a local `harvestedChains` and hands over via callAsync). The
+payload carries JUCE/Snapshot types, so the controller is now JUCE-linked: its 5
+phase-machine + payload tests moved to `dcorerouter_tests_juce`
+(`ReconfigurationControllerTests`, `juce::UnitTest`). **Independent code-review of the
+relocation: behavior-preserving, no bugs, thread discipline intact** (all 7 alias
+sites are references where the original mutated, copies only where read-only; worker
+thread never touches the payload; no dangling refs). MainComponent.h −42 lines.
 
 **Needs real-device verification:** Settings change (preserve-state restart), Load
 snapshot (cold-start matrix + plugin restore), Reset button, and the auto-recover
@@ -112,7 +118,7 @@ pull a large block out of `MainComponent.cpp` — to be done with device verific
 | C1 PanicController | done | unit tests + review |
 | C2 PanelHost | done | build; **needs visual** |
 | C3 ReconfigurationController (phase machine) | done | unit tests + build |
-| C3 pendingSnap/plugin-queue relocation | **deferred** | — |
+| C3 pendingSnap/plugin-queue relocation | done | review + unit tests + build; **needs device** |
 | C4 single-source-of-truth | already satisfied | verified by inspection |
 | C5 god-file shrink | emergent (−144 lines) | build |
 
