@@ -242,6 +242,8 @@ namespace dcr
             // even though the splash is gone.  processNextPluginLoad bumps
             // pluginLoadCursor as it finishes each load; when cursor reaches
             // size (or the queue was empty to begin with) we're done.
+            auto& pluginLoadQueue = reconfig.pluginQueue();
+            const int pluginLoadCursor = reconfig.pluginCursor();
             if (pluginLoadCursor >= (int) pluginLoadQueue.size())
                 loadingOverlay.hideOverlay();
             else
@@ -1046,6 +1048,7 @@ namespace dcr
 
     void MainComponent::applyDeviceSelection (std::vector<AudioEngine::DeviceSpec> newSpecs)
     {
+        auto& pendingSnap = reconfig.snapshot(); // single owner; message-thread only
         if (!reconfig.tryBegin())
         {
             // Concurrent call rejected.  If applySnapshot stuffed pendingSnap
@@ -1173,6 +1176,7 @@ namespace dcr
                 [this, alive, specs, preserved, started, preserveChains, chainsToRestore = std::move (harvestedChains)]() mutable {
                     if (!alive->load (std::memory_order_acquire))
                         return;
+                    auto& pendingSnap = reconfig.snapshot(); // single owner; message-thread only
                     reconfig.advance (ReconfigurationController::Phase::RestoringMatrix);
                     currentSpecs = specs;
                     if (!specs.empty() && !started)
@@ -1486,6 +1490,7 @@ namespace dcr
         // reconfig worker thread and will resize the matrix to (totalIns,
         // totalOuts), zeroing everything.  Stash the values; the reconfig
         // callAsync drains pendingSnap AFTER the new matrix is live.
+        auto& pendingSnap = reconfig.snapshot(); // single owner; message-thread only
         pendingSnap.inputTrim = s.inputTrim;
         pendingSnap.outputTrim = s.outputTrim;
         pendingSnap.inputMute = s.inputMute;
@@ -1508,6 +1513,13 @@ namespace dcr
 
     void MainComponent::restorePluginChainsAsync()
     {
+        // The reconfigure payload + queue live in the controller (single owner);
+        // alias them so the body below reads unchanged.  Message-thread only.
+        auto& pendingSnap = reconfig.snapshot();
+        auto& pluginLoadQueue = reconfig.pluginQueue();
+        int& pluginLoadCursor = reconfig.pluginCursor();
+        uint32_t& pluginLoadStartMs = reconfig.pluginStartMs();
+
         if (pendingSnap.channelChains.empty() && pendingSnap.groupChains.empty())
             return;
 
@@ -1589,6 +1601,12 @@ namespace dcr
 
     void MainComponent::processNextPluginLoad()
     {
+        // Queue + cursor live in the controller (single owner); alias so the
+        // body reads unchanged.  Message-thread only.
+        auto& pluginLoadQueue = reconfig.pluginQueue();
+        int& pluginLoadCursor = reconfig.pluginCursor();
+        const uint32_t pluginLoadStartMs = reconfig.pluginStartMs();
+
         if (pluginLoadCursor >= (int) pluginLoadQueue.size())
         {
             juce::Logger::writeToLog ("PluginRestore: queue drained ("
@@ -1628,6 +1646,8 @@ namespace dcr
             juce::ignoreUnused (err);
             if (!alive->load (std::memory_order_acquire))
                 return;
+            auto& pluginLoadQueue = reconfig.pluginQueue(); // single owner; message-thread only
+            int& pluginLoadCursor = reconfig.pluginCursor();
             // Re-read the job (its slot in the queue may have moved if a new
             // restore was kicked off, but pluginLoadCursor is stable per-run).
             if (cursor >= (int) pluginLoadQueue.size())

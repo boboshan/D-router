@@ -119,55 +119,13 @@ namespace dcr
         MatrixStateByName captureMatrixByName() const;
         void restoreMatrixByName (const MatrixStateByName& s);
 
-        // Snapshot apply runs in two phases: the synchronous bit (settings,
-        // groups) plus kicking applyDeviceSelection(), then the async tail that
-        // touches the matrix AFTER engine.start() has resized it.  pendingSnap
-        // bridges the two -- the reconfig's callAsync drains it.
-        struct PendingSnapshotApply
-        {
-            std::vector<float> inputTrim;
-            std::vector<float> outputTrim;
-            std::vector<unsigned char> inputMute;
-            std::vector<unsigned char> outputMute;
-            std::vector<unsigned char> inputSolo;
-            std::vector<Snapshot::Crosspoint> crosspoints;
-            std::vector<Snapshot::ChannelChain> channelChains;
-            std::vector<Snapshot::GroupChain> groupChains;
-            bool valid = false;
-        };
-        PendingSnapshotApply pendingSnap;
+        // The reconfigure payload (pending snapshot + plugin-restore queue) now
+        // lives in ReconfigurationController as its single owner; access it via
+        // `reconfig.snapshot()` / `reconfig.pluginQueue()` / etc.  These aliases
+        // keep the struct names short at the call sites.
+        using PendingSnapshotApply = ReconfigurationController::PendingSnapshotApply;
+        using PendingPluginLoad = ReconfigurationController::PendingPluginLoad;
         void restorePluginChainsAsync();
-
-        // Plugin-restore queue.  JUCE's createPluginInstanceAsync for AU is
-        // "async" in name only -- on macOS the actual AudioComponent
-        // instantiation has to run on the message thread.  If we fire every
-        // restore in one shot the message thread gets pegged for tens of
-        // seconds (one user's snapshot with 11 input chains of a single big
-        // EQ wedged the UI at ~1 fps for 30 s).  Process strictly one at a
-        // time with a callAsync yield between each, so the message thread
-        // can service paint/mouse/meter events between loads.
-        struct PendingPluginLoad
-        {
-            juce::PluginDescription desc;
-            juce::MemoryBlock state;
-            bool bypassed = false;
-            int slotIdx = 0;
-
-            enum class Kind { ChannelSlot,
-                GroupSlot } kind = Kind::ChannelSlot;
-
-            // For ChannelSlot.
-            bool isInputChannel = false;
-            int globalChannelIdx = -1;
-
-            // For GroupSlot.
-            bool isInputGroup = false;
-            int groupIdx = -1;
-            juce::AudioChannelSet channelSet { juce::AudioChannelSet::stereo() };
-        };
-        std::vector<PendingPluginLoad> pluginLoadQueue;
-        int pluginLoadCursor = 0;
-        uint32_t pluginLoadStartMs = 0;
         void processNextPluginLoad();
 
         // Heap-allocated "this is still alive" sentinel.  Captured by async

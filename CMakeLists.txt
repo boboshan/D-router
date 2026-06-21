@@ -114,7 +114,6 @@ add_executable(dcorerouter_tests
     tests/CoreLogicTests.cpp
     Source/Routing/RoutingMatrix.cpp
     Source/Routing/PanicController.cpp
-    Source/Engine/ReconfigurationController.cpp
 )
 target_include_directories(dcorerouter_tests PRIVATE Source)
 target_compile_features(dcorerouter_tests PRIVATE cxx_std_20)
@@ -130,6 +129,8 @@ target_sources(dcorerouter_tests_juce PRIVATE
     tests/juce/SettingsStoreTests.cpp
     tests/juce/AtomicXmlWriteTests.cpp
     tests/juce/CrashHandlerTests.cpp
+    tests/juce/ReconfigurationControllerTests.cpp
+    Source/Engine/ReconfigurationController.cpp
     Source/Persistence/SnapshotStore.cpp
     Source/Persistence/SettingsStore.cpp
     Source/Persistence/AtomicXmlWrite.cpp

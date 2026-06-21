@@ -1,6 +1,12 @@
 #pragma once
 
+#include "Persistence/SnapshotStore.h"
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
 #include <atomic>
+#include <cstdint>
+#include <vector>
 
 namespace dcr
 {
@@ -52,10 +58,68 @@ namespace dcr
         Phase phase() const noexcept { return phase_.load (std::memory_order_acquire); }
         bool active() const noexcept { return phase() != Phase::Idle; }
 
+        // ---- Reconfigure payload (single owner) ------------------------------
+        // These were previously loose in MainComponent; the controller now owns
+        // them so the whole reconfigure state lives in one place.  They are
+        // touched ONLY on the message thread (the worker harvests into a local
+        // and hands it over via callAsync), so no synchronisation is needed
+        // beyond the discipline the existing code already keeps.
+
+        // The matrix/plugin state restored AFTER engine.start() resizes the
+        // matrix.  Bridges applyDeviceSelection's worker -> message handoff.
+        struct PendingSnapshotApply
+        {
+            std::vector<float> inputTrim;
+            std::vector<float> outputTrim;
+            std::vector<unsigned char> inputMute;
+            std::vector<unsigned char> outputMute;
+            std::vector<unsigned char> inputSolo;
+            std::vector<Snapshot::Crosspoint> crosspoints;
+            std::vector<Snapshot::ChannelChain> channelChains;
+            std::vector<Snapshot::GroupChain> groupChains;
+            bool valid = false;
+        };
+
+        // One queued plugin re-instantiation.  AU createPluginInstanceAsync is
+        // async in name only on macOS (must run on the message thread), so the
+        // queue is drained strictly one-at-a-time with a callAsync yield between
+        // each to keep the UI responsive.
+        struct PendingPluginLoad
+        {
+            juce::PluginDescription desc;
+            juce::MemoryBlock state;
+            bool bypassed = false;
+            int slotIdx = 0;
+
+            enum class Kind {
+                ChannelSlot,
+                GroupSlot
+            } kind = Kind::ChannelSlot;
+
+            // For ChannelSlot.
+            bool isInputChannel = false;
+            int globalChannelIdx = -1;
+
+            // For GroupSlot.
+            bool isInputGroup = false;
+            int groupIdx = -1;
+            juce::AudioChannelSet channelSet { juce::AudioChannelSet::stereo() };
+        };
+
+        PendingSnapshotApply& snapshot() noexcept { return pendingSnapshot_; }
+        std::vector<PendingPluginLoad>& pluginQueue() noexcept { return pluginLoadQueue_; }
+        int& pluginCursor() noexcept { return pluginLoadCursor_; }
+        uint32_t& pluginStartMs() noexcept { return pluginLoadStartMs_; }
+
     private:
         static Phase successorOf (Phase p) noexcept;
 
         std::atomic<Phase> phase_ { Phase::Idle };
+
+        PendingSnapshotApply pendingSnapshot_;
+        std::vector<PendingPluginLoad> pluginLoadQueue_;
+        int pluginLoadCursor_ = 0;
+        uint32_t pluginLoadStartMs_ = 0;
     };
 
 }
